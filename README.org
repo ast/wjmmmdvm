@@ -1,0 +1,97 @@
+#+TITLE: MMDVM HS Hat — SM6WJM
+#+AUTHOR: Albin Stigo (SM6WJM)
+#+OPTIONS: toc:2 num:nil
+
+Notes, scripts and configuration for my MMDVM HS Hat hotspot running on a
+Raspberry Pi 4 (hostname: =mmdvm=).
+
+* Hardware
+
+- MMDVM HS Hat rev 2.0 (mine), rev 1.6 (Anders')
+- 12.288 MHz TCXO onboard (works a bit better than the more common 14.7456 MHz)
+- Raspberry Pi 4
+
+Because of the 12.288 MHz TCXO, PiStar cannot update the firmware with a
+pre-compiled binary — the firmware must be built from source with the correct
+config (see [[#firmware-build]]).
+
+* Upstream projects
+
+- Hardware: https://github.com/mathisschmieder/MMDVM_HS_Hat
+- Firmware: https://github.com/juribeparada/MMDVM_HS
+- Host software: https://github.com/g4klx/MMDVMHost
+
+* Firmware build
+:PROPERTIES:
+:CUSTOM_ID: firmware-build
+:END:
+
+#+begin_src bash
+  git clone https://github.com/juribeparada/MMDVM_HS.git
+  cd MMDVM_HS
+
+  # Pick the matching board/clock config — this one is for the 12 MHz HS Hat.
+  cp configs/MMDVM_HS_Hat-12mhz.h Config.h
+
+  make
+#+end_src
+
+There is also an upstream installer script if you prefer:
+
+#+begin_src bash
+  curl -OL https://raw.github.com/juribeparada/MMDVM_HS/master/scripts/install_fw_hshat-12mhz.sh
+#+end_src
+
+* Flashing
+
+On newer Raspberry Pi models the autoboot logic in =stm32flash= no longer
+toggles BOOT0/RESET correctly via =/sys/class/gpio= (see
+[[https://sourceforge.net/p/stm32flash/wiki/Hints/][stm32flash hints]]). The
+script in [[file:scripts/flash.sh]] drives the pins manually using =pinctrl=:
+
+- GPIO 20 → BOOT0
+- GPIO 21 → RESET
+
+Usage on the Pi:
+
+#+begin_src bash
+  # Default binary path is bin/mmdvm_f1.bin
+  ./scripts/flash.sh
+
+  # Or pass an explicit path
+  ./scripts/flash.sh path/to/firmware.bin
+#+end_src
+
+Requires =stm32flash= and =pinctrl= installed on the Pi.
+
+* Host configuration
+
+The active =MMDVMHost= configuration lives in [[file:MMDVM.ini]]. Highlights:
+
+| Setting       | Value                  |
+|---------------+------------------------|
+| Callsign      | SM6WJM                 |
+| DMR ID        | 2406237                |
+| Mode          | Simplex (Duplex=0)     |
+| RX/TX         | 433.6375 MHz           |
+| Modes enabled | DMR                    |
+| DMR network   | Brandmeister BM2402 (44.5.24.178:62031) |
+| Modem port    | =/dev/ttyAMA0= @ 115200 |
+
+The Brandmeister password is redacted (=Password=CHANGEME=) — set it locally
+on the Pi, do not commit the real value.
+
+* MD-380 note
+
+To flash an MD-380 from Windows 10 you need to install the STM Device in DFU
+mode driver.
+
+* Repository layout
+
+#+begin_src text
+  .
+  ├── README.org          # This file
+  ├── MMDVM.ini           # MMDVMHost configuration (password redacted)
+  └── scripts/
+      └── flash.sh        # STM32 flashing script (uses pinctrl)
+#+end_src
