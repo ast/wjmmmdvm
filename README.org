@@ -20,6 +20,8 @@ config (see [[#firmware-build]]).
 - Hardware: https://github.com/mathisschmieder/MMDVM_HS_Hat
 - Firmware: https://github.com/juribeparada/MMDVM_HS
 - Host software: https://github.com/g4klx/MMDVMHost
+- DMR gateway: https://github.com/g4klx/DMRGateway
+- MQTT broker (Debian/Raspberry Pi OS): =mosquitto= package
 
 * Firmware build
 :PROPERTIES:
@@ -78,8 +80,59 @@ The active =MMDVMHost= configuration lives in [[file:MMDVM.ini]]. Highlights:
 | DMR network   | Brandmeister BM2402 (44.5.24.178:62031) |
 | Modem port    | =/dev/ttyAMA0= @ 115200 |
 
-The Brandmeister password is redacted (=Password=CHANGEME=) — set it locally
-on the Pi, do not commit the real value.
+The Brandmeister password is no longer in =MMDVM.ini= — newer =MMDVMHost=
+hands off to a separate DMR gateway process (see next section), which holds
+the BM password.
+
+* DMR network (DMRGateway)
+:PROPERTIES:
+:CUSTOM_ID: dmr-network
+:END:
+
+As of mid-2026 =MMDVMHost= dropped the =Type=Direct= mode in =[DMR Network]=
+that let it connect straight to a Brandmeister master. The new model:
+
+#+begin_src text
+  RF  ──►  MMDVMHost  ──UDP 127.0.0.1──►  DMRGateway  ──►  BM2402 master
+#+end_src
+
+=MMDVMHost= now only knows about a local UDP gateway:
+
+#+begin_src conf
+  [DMR Network]
+  LocalAddress=127.0.0.1
+  LocalPort=62032
+  GatewayAddress=127.0.0.1
+  GatewayPort=62031
+#+end_src
+
+You must run [[https://github.com/g4klx/DMRGateway][DMRGateway]] alongside
+=MMDVMHost= on the Pi. Its config is the place where the Brandmeister
+password and the BM2402 endpoint (=44.5.24.178:62031=) now live. Sketch:
+
+#+begin_src conf
+  [DMR Network 1]
+  Enabled=1
+  Name=BM_2402
+  Address=44.5.24.178
+  Port=62031
+  Password=YOUR_BM_PASSWORD
+  # ...
+#+end_src
+
+* MQTT
+
+Newer =MMDVMHost= always tries to publish status to an MQTT broker — there is
+no =Enable=0= switch. Install =mosquitto= on the Pi to silence the
+"Connection refused" warning at startup:
+
+#+begin_src bash
+  sudo apt install mosquitto
+  sudo systemctl enable --now mosquitto
+#+end_src
+
+The =[MQTT]= section in [[file:MMDVM.ini]] points at =127.0.0.1:1883= with
+=Auth=0=, which matches a stock mosquitto install.
 
 * MD-380 note
 
