@@ -7,7 +7,7 @@ Raspberry Pi 4 (hostname: =mmdvm=).
 
 * Hardware
 
-- MMDVM HS Hat rev 2.0 (mine), rev 1.6 (Anders')
+- MMDVM HS Hat rev 2.0 (SM6WJM), rev 1.6 (SM6WLH)
 - 12.288 MHz TCXO onboard (works a bit better than the more common 14.7456 MHz)
 - Raspberry Pi 4
 
@@ -133,6 +133,73 @@ no =Enable=0= switch. Install =mosquitto= on the Pi to silence the
 
 The =[MQTT]= section in [[file:MMDVM.ini]] points at =127.0.0.1:1883= with
 =Auth=0=, which matches a stock mosquitto install.
+
+** Topic namespace
+
+The =Name== field in =[MQTT]= is used as both the MQTT client_id and the
+**topic prefix** — every topic below is published as =mmdvm/<topic>= with
+the current config. Set =Name=hotspot-uhf= if you want a distinct
+namespace per node.
+
+** Topics MMDVMHost publishes
+
+| Topic               | Content                                                                 |
+|---------------------+-------------------------------------------------------------------------|
+| =mmdvm/log=         | Plaintext log lines, level-gated by =[Log] MQTTLevel=. Same as stdout.   |
+| =mmdvm/json=        | Structured per-event JSON (see below) — the interesting telemetry feed. |
+| =mmdvm/display-out= | Raw display-protocol bytes for an external renderer (replaces OLED/Nextion/HD44780). |
+| =mmdvm/response=    | Replies to remote-control commands.                                     |
+
+** What's in =mmdvm/json=
+
+One JSON envelope per RF or network event:
+
+- *Call start* (DMR / D-Star / YSF / P25 / NXDN) — src DMR ID, callsign
+  (looked up via =DMRIds.dat=), dst ID, group-vs-private flag
+- *Call end* — frame count, BER %, min/max/avg RSSI
+- =lost= — RF dropout / timeout
+- =rejected= / =invalid= / =late_entry= — access-control denials or
+  malformed frames
+- Periodic =rssi= and =ber= during a transmission
+- *Mode switch* — which mode is currently active
+- *POCSAG* — paging RIC, type (=alphanumeric= / =numeric= / =alert_1=
+  / =alert_2=), text, source (=local= / =network=)
+- *FM* state-machine transitions — =listening=, =kerchunk_rf=,
+  =relaying_rf=, =timeout_rf=, etc.
+- *Lifecycle* — ="MMDVMHost is starting"=, ="Opening network connections"=,
+  ="Sending CW ID"=, etc.
+
+** Topics MMDVMHost subscribes to
+
+- =mmdvm/display-in= — input events from an external display app
+- =mmdvm/command= — remote-control commands, registered only when
+  =[Remote Control] Enable=1=
+
+** Privacy note
+
+Every call your hotspot handles publishes the caller's DMR ID, callsign,
+destination TG, RSSI and BER to MQTT in real time. Anyone subscribed to
+=mmdvm/#= can watch the activity live. Fine for the default localhost +
+=Auth=0= setup. If you ever bind =mosquitto= to a routable interface,
+enable auth and add a =listener= config that keeps port 1883 off the LAN.
+
+** Watching it live
+
+#+begin_src bash
+  mosquitto_sub -h 127.0.0.1 -t 'mmdvm/#' -v
+#+end_src
+
+** Source references
+
+From upstream =g4klx/MMDVMHost@master=:
+
+- =MQTTConnection.cpp:128,175,214= — topic prefixing (=Name/topic=)
+- =Log.cpp:86= — =log= topic; =Log.cpp:104= — =json= topic
+- =MMDVMHost.cpp:341–344= — subscriptions; =:1200= — =display-out=
+- =RemoteControl.cpp:207= — =response= topic
+- =writeJSONRF= / =writeJSONNet= / =writeJSON= call sites in
+  =DMRSlot.cpp=, =DStarControl.cpp=, =YSFControl.cpp=, =P25Control.cpp=,
+  =NXDNControl.cpp=, =FMControl.cpp=, =POCSAGControl.cpp=
 
 * MD-380 note
 
