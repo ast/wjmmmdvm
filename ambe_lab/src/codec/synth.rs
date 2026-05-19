@@ -52,6 +52,11 @@ pub struct VoicedSynth {
     prev_l: usize,
     /// RNG for unvoiced phase randomisation.
     rng: SmallRng,
+    /// Previous input and output samples of the noise high-pass
+    /// filter. Persists across frames so the filter has no cold-start
+    /// transient at each frame boundary.
+    noise_hp_prev_in: f32,
+    noise_hp_prev_out: f32,
 }
 
 impl Default for VoicedSynth {
@@ -68,7 +73,26 @@ impl VoicedSynth {
             prev_voiced: vec![false; MAX_HARMONICS],
             prev_l: 0,
             rng: SmallRng::seed_from_u64(0x4D424553594E5448),
+            noise_hp_prev_in: 0.0,
+            noise_hp_prev_out: 0.0,
         }
+    }
+
+    /// 1-pole high-pass filter on a single noise sample.
+    ///
+    /// Form: `y[n] = a · (y[n-1] + x[n] − x[n-1])`
+    ///
+    /// With `a = 0.85` this attenuates DC and very-low-frequency
+    /// content while preserving most of the audible band — gives our
+    /// otherwise-flat-spectrum noise a touch of mbelib's high-pass
+    /// shape (mbelib's noise has autocorrelation ≈ -0.12; pure white
+    /// noise is 0; this filter pushes toward negative values).
+    fn highpass_noise(&mut self, x: f32) -> f32 {
+        const HP_A: f32 = 0.85;
+        let y = HP_A * (self.noise_hp_prev_out + x - self.noise_hp_prev_in);
+        self.noise_hp_prev_in = x;
+        self.noise_hp_prev_out = y;
+        y
     }
 
     /// Render one frame of audio from the supplied spectrum.
@@ -107,17 +131,22 @@ impl VoicedSynth {
         }
 
         // 2. Unvoiced harmonics: collapse into a single broadband
-        //    noise contribution scaled by their total interpolated
-        //    magnitude. This gives flat-spectrum noise instead of a
-        //    comb of cosines.
+        //    noise contribution. Use energy-summation (sqrt of sum
+        //    of squares) rather than linear magnitude sum — this is
+        //    the correct amplitude for N independent noise sources
+        //    so the noise RMS matches the voiced harmonics' RMS.
+        //    Linear sum overcounts by ~√N and produces hiss in
+        //    quiet stretches.
         let cur_unvoiced_amp: f32 = (0..l)
             .filter(|&ll| !spectrum.voiced[ll])
-            .map(|ll| spectrum.ml[ll])
-            .sum();
+            .map(|ll| spectrum.ml[ll] * spectrum.ml[ll])
+            .sum::<f32>()
+            .sqrt();
         let prev_unvoiced_amp: f32 = (0..l.min(self.prev_l))
             .filter(|&ll| !self.prev_voiced[ll])
-            .map(|ll| self.prev_ml[ll])
-            .sum();
+            .map(|ll| self.prev_ml[ll] * self.prev_ml[ll])
+            .sum::<f32>()
+            .sqrt();
         // If the previous frame had no unvoiced content here, start
         // at the current level (no fade-in pop).
         let prev_unvoiced_amp = if prev_unvoiced_amp == 0.0 && cur_unvoiced_amp > 0.0 {
@@ -130,8 +159,9 @@ impl VoicedSynth {
             for t in 0..PCM_SAMPLES_PER_FRAME {
                 let alpha = t as f32 * inv_n;
                 let amp = prev_unvoiced_amp + (cur_unvoiced_amp - prev_unvoiced_amp) * alpha;
-                let noise: f32 = self.rng.gen_range(-1.0..1.0);
-                out[t] += amp * noise;
+                let raw_noise: f32 = self.rng.gen_range(-1.0..1.0);
+                let shaped = self.highpass_noise(raw_noise);
+                out[t] += amp * shaped;
             }
         }
 
@@ -163,6 +193,8 @@ impl VoicedSynth {
             *v = false;
         }
         self.prev_l = 0;
+        self.noise_hp_prev_in = 0.0;
+        self.noise_hp_prev_out = 0.0;
     }
 }
 

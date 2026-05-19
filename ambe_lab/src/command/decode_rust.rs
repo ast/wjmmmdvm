@@ -45,7 +45,9 @@ impl DecodeRustCmd {
                     voice_count += 1;
                     if let Some(spec) = reconstruct(&fields, &mut state) {
                         let samples = synth.render(&spec);
-                        let bytes = frame_to_i16_le(&samples, &mut peak, 0.9);
+                        // 0.7 headroom matches md380-emu's natural
+                        // peak level (~22k vs our prior 29k at 0.9).
+                        let bytes = frame_to_i16_le(&samples, &mut peak, 0.7);
                         out.write_all(&bytes).await?;
                     } else {
                         out.write_all(&[0u8; 320]).await?;
