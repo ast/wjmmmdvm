@@ -1,0 +1,98 @@
+#+TITLE: mmdvm_sip — DMR ↔ SIP bridge (experimental)
+#+AUTHOR: Albin Stigo (SM6WJM)
+#+OPTIONS: toc:2 num:nil
+
+Rust binary that will eventually bridge MMDVMHost's =[DMR Network]= UDP
+stream (HomeBrew Repeater Protocol) to a SIP PBX such as Asterisk. Today
+it has a working SIP REGISTER client and a passive DMR listener — neither
+is wired to the other yet.
+
+Project sits inside the wider [[file:../README.org][MMDVM HS Hat notes
+repo]]; see the parent README for the radio side (modem config, MMDVMHost,
+DMRGateway, MQTT) and the protocol reference for the HBP packets this
+crate parses.
+
+* Build
+
+#+begin_src bash
+  cargo build
+  cargo test
+#+end_src
+
+* Configuration
+
+SIP credentials live in [[file:mmdvm_sip.toml]] (gitignored — never
+committed). Copy [[file:mmdvm_sip.toml.example]] and fill in your
+Asterisk endpoint values.
+
+* Subcommands
+:PROPERTIES:
+:CUSTOM_ID: subcommands
+:END:
+
+** =register=
+
+Registers to the configured Asterisk PBX and keeps the registration alive
+(re-REGISTERs at =expires/2=). Handles 401 digest challenges (MD5,
+=qop=auth= or none).
+
+#+begin_src bash
+  RUST_LOG=mmdvm_sip=debug cargo run -- register
+#+end_src
+
+Verify from the PBX side:
+
+#+begin_src bash
+  asterisk -rx 'pjsip show contacts'
+  asterisk -rx 'pjsip show registrations'
+#+end_src
+
+** =listen-dmr=
+
+Binds a UDP socket and logs every HBP datagram MMDVMHost streams to it.
+=DMRD= voice/data bursts are decoded into structured fields (src/dst DMR
+ID, slot, group-vs-private, stream ID, BER, RSSI). =DMRC= heartbeats,
+=DMRG= GPS frames and =DMRA= Talker Alias blocks are recognised by magic
+and logged opaquely — full layouts will be decoded later.
+
+On the LAN host =MMDVM-testing.ini= points at (=192.168.1.40= in this
+repo):
+
+#+begin_src bash
+  RUST_LOG=mmdvm_sip=info cargo run -- listen-dmr
+  # or: cargo run -- listen-dmr --bind 0.0.0.0:62031
+#+end_src
+
+Then on the Pi:
+
+#+begin_src bash
+  MMDVMHost MMDVM-testing.ini
+#+end_src
+
+=DMRC= heartbeats appear at =DEBUG= every ~10 s; each RF burst produces
+an =INFO= "DMR data burst" line.
+
+* Source layout
+
+#+begin_src text
+  src/
+  ├── main.rs                 # clap dispatcher
+  ├── command/
+  │   ├── mod.rs              # Command enum
+  │   ├── register.rs         # `register` subcommand
+  │   └── listen_dmr.rs       # `listen-dmr` subcommand
+  ├── config.rs               # Config / SipConfig (serde + toml)
+  ├── error.rs                # SipError (thiserror)
+  ├── udp_transport.rs        # UdpTransport — tokio UDP wrapper
+  ├── digest_auth.rs          # DigestAuth — MD5 RFC 2617/7616
+  ├── registration.rs         # Registration state machine + challenge parser
+  ├── sip_client.rs           # SipClient orchestrator + retry loop
+  ├── dmr_listener.rs         # DmrListener — UDP recv + dispatch
+  └── dmr/
+      ├── mod.rs              # Re-exports
+      ├── packet.rs           # Packet<'a> dispatch enum
+      ├── dmr_data.rs         # DMRD 55B struct + DmrFlags
+      ├── dmr_config.rs       # DMRC 119B (body opaque for now)
+      ├── dmr_gps.rs          # DMRG 14B (body opaque for now)
+      └── dmr_alias.rs        # DMRA 15B (body opaque for now)
+#+end_src

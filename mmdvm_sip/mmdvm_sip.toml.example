@@ -1,0 +1,27 @@
+# Copy to mmdvm_sip.toml and fill in your Asterisk endpoint values.
+# The real file is gitignored — do not commit credentials.
+
+[sip]
+# Asterisk PBX host. LAN IP or DNS name.
+server = "asterisk.lan"
+# SIP signalling port. Default 5060.
+server_port = 5060
+# Realm / domain — usually the same as `server`, but match what your
+# Asterisk endpoint config expects (chan_pjsip `aors.contact`).
+domain = "asterisk.lan"
+
+# SIP endpoint user / AOR configured on Asterisk.
+user = "mmdvm"
+# Auth username. Usually equals `user`; depends on Asterisk auth section.
+auth_user = "mmdvm"
+# Auth password — keep this file out of git.
+password = "CHANGEME"
+
+# Local UDP port to bind. 0 = let the kernel pick.
+local_port = 0
+
+# Desired registration expiry in seconds. We re-register at expires/2.
+expires = 3600
+
+# User-Agent header. Defaults to "mmdvm_sip/<crate version>".
+# user_agent = "mmdvm_sip/0.1.0"

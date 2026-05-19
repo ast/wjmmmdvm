@@ -201,6 +201,119 @@ From upstream =g4klx/MMDVMHost@master=:
   =DMRSlot.cpp=, =DStarControl.cpp=, =YSFControl.cpp=, =P25Control.cpp=,
   =NXDNControl.cpp=, =FMControl.cpp=, =POCSAGControl.cpp=
 
+* Capturing DMR network traffic
+:PROPERTIES:
+:CUSTOM_ID: capture-dmr
+:END:
+
+Useful for development / debugging — observe the HBP frames that
+=MMDVMHost= would normally send to =DMRGateway=, or echo them to a custom
+process bridging somewhere else.
+
+** Testing config
+
+[[file:MMDVM-testing.ini]] is a copy of =MMDVM.ini= with =[DMR Network]=
+pointed at a different host (=192.168.1.40:62031= as committed — change to
+your listener's IP) and =LocalAddress=0.0.0.0= so MMDVMHost can receive
+replies from a non-localhost peer:
+
+#+begin_src bash
+  MMDVMHost MMDVM-testing.ini
+#+end_src
+
+** Quick listen with netcat
+
+#+begin_src bash
+  nc -u -l -p 62031 | xxd
+#+end_src
+
+Payload is binary — pipe through =xxd= or =hexdump -C=. First 4 bytes of
+each datagram are an ASCII magic identifying the packet type.
+
+Gotchas with =nc -u=:
+
+- OpenBSD =nc= (Debian default) locks onto the first peer it sees.
+- =nc= can't reply, so the channel becomes observe-only and =MMDVMHost=
+  won't TX anything on RF because nothing answers.
+
+** Passive observation with tcpdump
+
+Doesn't terminate the UDP stream, so the hotspot keeps thinking it's
+talking to a real gateway:
+
+#+begin_src bash
+  sudo tcpdump -i any -nXX 'udp port 62031 or udp port 62032'
+#+end_src
+
+For Wireshark capture (no built-in HBP dissector, but the magics are
+readable in the byte view):
+
+#+begin_src bash
+  sudo tcpdump -i any -w mmdvm.pcap 'udp port 62031 or udp port 62032'
+#+end_src
+
+** Mock gateway with socat
+
+Echo every datagram back to the sender so =MMDVMHost= sees a live peer:
+
+#+begin_src bash
+  socat -v UDP4-RECVFROM:62031,fork \
+       UDP4-SENDTO:'$SOCAT_PEERADDR:$SOCAT_PEERPORT'
+#+end_src
+
+** Protocol summary
+
+HomeBrew Repeater Protocol (HBP) over UDP. Same wire format
+BrandMeister masters and =DMRGateway= speak. No authentication on this
+socket. Packet type is identified by a 4-byte ASCII magic at offset 0.
+
+| From → To             | Magic | Purpose                                |
+|-----------------------+-------+----------------------------------------|
+| Pi → 192.168.1.40     | DMRD  | RF voice/data burst (55 B)             |
+| Pi → 192.168.1.40     | DMRG  | GPS embedded in radio's LC             |
+| Pi → 192.168.1.40     | DMRA  | Talker Alias block                     |
+| Pi → 192.168.1.40     | DMRC  | Repeater config heartbeat (~every 10 s) |
+| 192.168.1.40 → Pi     | DMRD  | Network frames to TX on RF             |
+| 192.168.1.40 → Pi     | DMRP  | Ping / keepalive                       |
+| 192.168.1.40 → Pi     | DMRB  | Beacon request                         |
+
+=DMRD= packet layout (55 bytes):
+
+| Offset | Field                                                          |
+|--------+----------------------------------------------------------------|
+| 0–3    | Magic =DMRD=                                                   |
+| 4      | Sequence                                                       |
+| 5–7    | Source DMR ID (24-bit)                                         |
+| 8–10   | Destination DMR ID (24-bit)                                    |
+| 11–14  | Repeater ID (=Id= from =[General]=, 32-bit BE)                 |
+| 15     | Flags: bit7=slot, bit6=group/private, bit5/4=data/voice sync, bits0–3=frame N or data type |
+| 16–19  | Stream ID (random per call/CSBK/data header)                   |
+| 20–52  | 33-byte DMR payload (AMBE voice frames or data)                |
+| 53     | BER                                                            |
+| 54     | RSSI                                                           |
+
+** Reference implementations
+
+- =hblink3= (Python): https://github.com/HBLink-org/hblink3
+- =DMRGateway= (C++): https://github.com/g4klx/DMRGateway
+- =MMDVMHost/DMRNetwork.cpp= for the exact byte layouts
+
+Sanity check: with the link up and no RF activity you should still see a
+=DMRC= packet roughly every 10 seconds. If those are flowing but no
+=DMRD=, nothing is being keyed on RF.
+
+* mmdvm_sip — DMR ↔ SIP bridge (experimental)
+:PROPERTIES:
+:CUSTOM_ID: mmdvm-sip
+:END:
+
+Rust binary that will eventually bridge MMDVMHost's =[DMR Network]= UDP
+stream (HBP) to a SIP PBX such as Asterisk. Today it has a working SIP
+REGISTER client and a passive DMR listener.
+
+Build, configuration and per-subcommand usage live in
+[[file:mmdvm_sip/README.org][mmdvm_sip/README.org]].
+
 * MD-380 note
 
 To flash an MD-380 from Windows 10 you need to install the STM Device in DFU
@@ -211,7 +324,9 @@ mode driver.
 #+begin_src text
   .
   ├── README.org          # This file
-  ├── MMDVM.ini           # MMDVMHost configuration (password redacted)
-  └── scripts/
-      └── flash.sh        # STM32 flashing script (uses pinctrl)
+  ├── MMDVM.ini           # Production MMDVMHost configuration (→ local DMRGateway)
+  ├── MMDVM-testing.ini   # Testing variant — streams DMR frames to a LAN host
+  ├── scripts/
+  │   └── flash.sh        # STM32 flashing script (uses pinctrl)
+  └── mmdvm_sip/          # Rust DMR ↔ SIP bridge (experimental)
 #+end_src

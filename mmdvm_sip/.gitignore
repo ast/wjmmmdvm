@@ -1,0 +1,5 @@
+/target
+/Cargo.lock
+
+# Real config holds the SIP password — never commit it.
+/mmdvm_sip.toml
