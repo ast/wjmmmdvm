@@ -29,7 +29,7 @@ pub struct EchoDmrCmd {
 
     /// Delay (ms) after the recorded call ends before the echo
     /// starts transmitting.
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 500)]
     delay_ms: u64,
 
     /// Idle window (ms) with no bursts that marks the call as ended.
