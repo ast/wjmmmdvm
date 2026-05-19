@@ -4,45 +4,84 @@
 //! ## Burst bit layout
 //!
 //! The 33-byte DMRD voice payload carries 264 bits of one DMR
-//! timeslot burst (60 ms). Within those 264 bits the AMBE voice
-//! data is interleaved with the burst SYNC / EMB field:
+//! timeslot burst. Within those 264 bits the AMBE voice data is
+//! transmitted alongside a SYNC / EMB field:
 //!
 //! ```text
-//! bits   0..72   : AMBE frame 1 (72 bits, full)
-//! bits  72..108  : AMBE frame 2 first half (36 bits)
+//! bits   0..72   : AMBE frame 1 (36 dibits)
+//! bits  72..108  : AMBE frame 2, dibits 0..17  (first half)
 //! bits 108..156  : SYNC / EMB (48 bits) — skipped
-//! bits 156..192  : AMBE frame 2 second half (36 bits)
-//! bits 192..264  : AMBE frame 3 (72 bits, full)
+//! bits 156..192  : AMBE frame 2, dibits 18..35 (second half)
+//! bits 192..264  : AMBE frame 3 (36 dibits)
 //! ```
 //!
-//! We extract each frame's 72 bits into a flat array (bit 0 = first
-//! received bit) and then re-arrange them into mbelib's `[4][24]`
-//! `AmbeFr` matrix for the FEC strip.
+//! ## Per-frame dibit deinterleaver
 //!
-//! ## AMBE frame → AmbeFr mapping
+//! Each 72-bit AMBE+2 frame is **bit-interleaved** before
+//! transmission — the wire bits are not in C0||C1||C2||C3 order.
+//! Each pair of wire bits forms a dibit; the dibit's two bits are
+//! distributed across the four `ambe_fr` rows so that any single
+//! symbol error spans both a high-protection and a low-protection
+//! position. The mapping is DSD's `rW`/`rX`/`rY`/`rZ` tables in
+//! `include/dmr_const.h`; the tables produce mbelib's `[4][24]`
+//! `AmbeFr` layout that [`crate::fec::strip_fec`] consumes.
 //!
-//! Following mbelib's convention (see `mbe_processAmbe2450Data` and
-//! `mbe_eccAmbe3600x2450C0`), the 72 received bits of one AMBE+2
-//! frame split into four protected/unprotected blocks:
+//! For dibit `i` (0..36), MSB first on the wire:
 //!
-//! | Wire bits | Block | Row | Indices used                 |
-//! |-----------|-------|-----|------------------------------|
-//! | 0..24     | C0    |  0  | [0]=extended parity, [1..=23] |
-//! | 24..47    | C1    |  1  | [0]=unused, [1..=23]          |
-//! | 47..58    | C2    |  2  | [0..=10]                      |
-//! | 58..72    | C3    |  3  | [0..=13]                      |
+//! ```text
+//! bit 1 of dibit (MSB) → ambe_fr[RW[i]][RX[i]]
+//! bit 0 of dibit (LSB) → ambe_fr[RY[i]][RZ[i]]
+//! ```
 //!
-//! Within each row, mbelib treats the **highest used index** as the
-//! MSB of the codeword. So the first wire bit of C0 lands at
-//! `fr[0][23]`, the last at `fr[0][0]` (= the extended parity).
+//! After applying the deinterleaver:
+//! - `ambe_fr[0][0..=23]` holds C0 (Golay24, MSB at [23], extended
+//!   parity at [0])
+//! - `ambe_fr[1][0..=22]` holds C1 (Golay23, MSB at [22], [23]
+//!   unused)
+//! - `ambe_fr[2][0..=10]` holds C2 (11 uncoded bits, MSB at [10])
+//! - `ambe_fr[3][0..=13]` holds C3 (14 uncoded bits, MSB at [13])
 
 use crate::fec::ambe::AmbeFr;
+
+// Per-AMBE-frame dibit deinterleaver. Verbatim from DSD's
+// `include/dmr_const.h` (ISC license).
+const RW: [usize; 36] = [
+    0, 1, 0, 1, 0, 1,
+    0, 1, 0, 1, 0, 1,
+    0, 1, 0, 1, 0, 1,
+    0, 1, 0, 1, 0, 2,
+    0, 2, 0, 2, 0, 2,
+    0, 2, 0, 2, 0, 2,
+];
+const RX: [usize; 36] = [
+    23, 10, 22,  9, 21,  8,
+    20,  7, 19,  6, 18,  5,
+    17,  4, 16,  3, 15,  2,
+    14,  1, 13,  0, 12, 10,
+    11,  9, 10,  8,  9,  7,
+     8,  6,  7,  5,  6,  4,
+];
+const RY: [usize; 36] = [
+    0, 2, 0, 2, 0, 2,
+    0, 2, 0, 3, 0, 3,
+    1, 3, 1, 3, 1, 3,
+    1, 3, 1, 3, 1, 3,
+    1, 3, 1, 3, 1, 3,
+    1, 3, 1, 3, 1, 3,
+];
+const RZ: [usize; 36] = [
+     5,  3,  4,  2,  3,  1,
+     2,  0,  1, 13,  0, 12,
+    22, 11, 21, 10, 20,  9,
+    19,  8, 18,  7, 17,  6,
+    16,  5, 15,  4, 14,  3,
+    13,  2, 12,  1, 11,  0,
+];
 
 /// Pull 3 AMBE frames out of a 33-byte DMRD voice payload, each in
 /// the [`AmbeFr`] layout that [`crate::fec::strip_fec`] expects.
 pub fn extract_voice_frames(payload: &[u8; 33]) -> [AmbeFr; 3] {
-    // Build a 264-bit array (one u8 per bit, MSB-first per byte) so
-    // we can index into burst bit positions cleanly.
+    // Convert the 264-bit payload to single bits, MSB-first per byte.
     let mut bits = [0u8; 264];
     for (byte_idx, byte) in payload.iter().enumerate() {
         for bit in 0..8 {
@@ -50,42 +89,39 @@ pub fn extract_voice_frames(payload: &[u8; 33]) -> [AmbeFr; 3] {
         }
     }
 
-    // Voice frame 1: bits 0..72 (contiguous)
-    let frame1 = pack_into_ambe_fr(&bits[0..72]);
+    // Frame 1: dibits 0..35 from burst bits 0..71.
+    let mut f1 = [0u8; 36];
+    for i in 0..36 {
+        f1[i] = (bits[2 * i] << 1) | bits[2 * i + 1];
+    }
 
-    // Voice frame 2: bits 72..108 + bits 156..192
-    let mut frame2_bits = [0u8; 72];
-    frame2_bits[..36].copy_from_slice(&bits[72..108]);
-    frame2_bits[36..].copy_from_slice(&bits[156..192]);
-    let frame2 = pack_into_ambe_fr(&frame2_bits);
+    // Frame 2: dibits 0..17 from burst bits 72..107, then dibits 18..35
+    // from burst bits 156..191 (skipping the 48-bit sync/EMB block).
+    let mut f2 = [0u8; 36];
+    for i in 0..18 {
+        f2[i] = (bits[72 + 2 * i] << 1) | bits[72 + 2 * i + 1];
+    }
+    for i in 0..18 {
+        f2[18 + i] = (bits[156 + 2 * i] << 1) | bits[156 + 2 * i + 1];
+    }
 
-    // Voice frame 3: bits 192..264 (contiguous)
-    let frame3 = pack_into_ambe_fr(&bits[192..264]);
+    // Frame 3: dibits 0..35 from burst bits 192..263.
+    let mut f3 = [0u8; 36];
+    for i in 0..36 {
+        f3[i] = (bits[192 + 2 * i] << 1) | bits[192 + 2 * i + 1];
+    }
 
-    [frame1, frame2, frame3]
+    [deinterleave(&f1), deinterleave(&f2), deinterleave(&f3)]
 }
 
-/// Re-arrange one 72-bit AMBE frame from wire order (`bits[0]` =
-/// first received bit) into mbelib's `[4][24]` matrix.
-fn pack_into_ambe_fr(bits: &[u8]) -> AmbeFr {
-    debug_assert_eq!(bits.len(), 72);
+/// Apply the per-AMBE-frame dibit deinterleaver to one 36-dibit
+/// frame, producing an mbelib-format `AmbeFr`.
+fn deinterleave(dibits: &[u8; 36]) -> AmbeFr {
     let mut fr: AmbeFr = [[0u8; 24]; 4];
-
-    // C0: wire bits 0..24 → fr[0]. First wire bit = fr[0][23].
-    for i in 0..24 {
-        fr[0][23 - i] = bits[i];
-    }
-    // C1: wire bits 24..47 (23 bits) → fr[1][23..=1]. fr[1][0] unused.
-    for i in 0..23 {
-        fr[1][23 - i] = bits[24 + i];
-    }
-    // C2: wire bits 47..58 (11 bits) → fr[2][10..=0].
-    for i in 0..11 {
-        fr[2][10 - i] = bits[47 + i];
-    }
-    // C3: wire bits 58..72 (14 bits) → fr[3][13..=0].
-    for i in 0..14 {
-        fr[3][13 - i] = bits[58 + i];
+    for i in 0..36 {
+        let d = dibits[i];
+        fr[RW[i]][RX[i]] = (d >> 1) & 1;
+        fr[RY[i]][RZ[i]] = d & 1;
     }
     fr
 }
@@ -108,43 +144,42 @@ mod tests {
     }
 
     #[test]
-    fn first_bit_of_frame1_lands_at_fr_0_23() {
+    fn first_wire_bit_of_each_frame_lands_at_c0_msb() {
+        // Per RW[0]=0, RX[0]=23: dibit-0 MSB of any frame ends up at
+        // ambe_fr[0][23] (= the MSB of the C0 codeword).
         let mut payload = [0u8; 33];
-        payload[0] = 0x80; // MSB of byte 0
+        payload[0] = 0x80; // frame 1, wire bit 0
+        let f = extract_voice_frames(&payload);
+        assert_eq!(f[0][0][23], 1);
+
+        let mut payload = [0u8; 33];
+        payload[9] = 0x80; // frame 2, wire bit 0 (burst bit 72)
+        let f = extract_voice_frames(&payload);
+        assert_eq!(f[1][0][23], 1);
+
+        let mut payload = [0u8; 33];
+        payload[24] = 0x80; // frame 3, wire bit 0 (burst bit 192)
+        let f = extract_voice_frames(&payload);
+        assert_eq!(f[2][0][23], 1);
+    }
+
+    #[test]
+    fn frame2_second_half_uses_dibits_18_onwards() {
+        // Burst bit 156 is the MSB of dibit 18 of frame 2. Per
+        // RW[18]=0, RX[18]=14 the bit lands at ambe_fr[0][14].
+        let mut payload = [0u8; 33];
+        payload[19] = 0x08; // bit 156 (byte 19 has bit-from-MSB position 4)
         let frames = extract_voice_frames(&payload);
-        assert_eq!(frames[0][0][23], 1);
-        // Nothing else should be set.
-        for r in 0..4 {
-            for c in 0..24 {
-                if !(r == 0 && c == 23) {
-                    assert_eq!(frames[0][r][c], 0, "frame[0][{r}][{c}]");
+        assert_eq!(frames[1][0][14], 1);
+        // Nothing else should be set anywhere.
+        for (fi, fr) in frames.iter().enumerate() {
+            for (r, row) in fr.iter().enumerate() {
+                for (c, bit) in row.iter().enumerate() {
+                    if !(fi == 1 && r == 0 && c == 14) {
+                        assert_eq!(*bit, 0, "frame {fi} fr[{r}][{c}]");
+                    }
                 }
             }
         }
-    }
-
-    #[test]
-    fn voice_frame_2_is_stitched_across_sync() {
-        // Place a marker at bit 72 (first half of frame 2) and bit
-        // 156 (start of second half). Both should land in frame 2.
-        let mut payload = [0u8; 33];
-        // Bit 72 is byte 9 bit 7 (MSB).
-        payload[9] = 0x80;
-        // Bit 156 is byte 19 bit 4 (counting from MSB = position 3).
-        payload[19] = 0x08;
-        let frames = extract_voice_frames(&payload);
-        // Bit 72 maps to wire-bit 0 of frame 2, which is fr[0][23].
-        assert_eq!(frames[1][0][23], 1);
-        // Bit 156 maps to wire-bit 36 of frame 2. wire bit 36 = first
-        // bit of C1 (24..47 in wire) → wire idx 36-24 = 12 → fr[1][11].
-        assert_eq!(frames[1][1][11], 1);
-    }
-
-    #[test]
-    fn first_bit_of_frame3_lands_at_byte_24() {
-        let mut payload = [0u8; 33];
-        payload[24] = 0x80;
-        let frames = extract_voice_frames(&payload);
-        assert_eq!(frames[2][0][23], 1);
     }
 }

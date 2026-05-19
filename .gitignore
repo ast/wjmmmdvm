@@ -1,3 +1,4 @@
 # Cargo workspace artifacts
 /target
 /Cargo.lock
+/dmr-rec
