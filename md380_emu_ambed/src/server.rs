@@ -6,6 +6,36 @@
 //! in the firmware mmap), so we run it on a dedicated OS thread and
 //! talk to it via an mpsc channel. Connection handlers are tokio
 //! tasks that send a request + oneshot-receiver and await the reply.
+//!
+//! ## Concurrency caveat — single audio stream at a time
+//!
+//! The daemon is **single-tenant** by design: it works correctly for
+//! one active encode/decode stream at a time. Multiple concurrent
+//! clients are accepted and their requests are serialised through
+//! the codec worker — but their **codec state is shared, not
+//! isolated**.
+//!
+//! AMBE+2 is heavily predictive: every frame's output depends on
+//! the previous frame via `ambe_mystery` (decoder context) and
+//! `ambe_en_mystery` (encoder context), two RAM-resident structures
+//! at fixed addresses. There is only one of each per process. If
+//! client A and B interleave frames, each codec call reads the
+//! other client's state as its predecessor. Voiced speech ends up
+//! with phase discontinuities, gain prediction (`γ = Δγ + 0.5·γ_prev`)
+//! drifts between streams, and so on.
+//!
+//! This matches real DVstick 30 / ThumbDV hardware dongle behaviour:
+//! one codec instance per dongle, no session concept in the
+//! AMBE-3000F protocol, callers serialise externally.
+//!
+//! Per-client state isolation would require either (a) reverse
+//! engineering the size of the `ambe_*_mystery` structs and
+//! save/restoring them on every context switch (the symbol table
+//! gives us only the base addresses, not sizes), or (b) running
+//! multiple daemon processes — each with its own firmware mmap. For
+//! the SIP↔DMR bridge use case (one call → one stream) the current
+//! single-tenant behaviour is exactly what we want; documenting the
+//! limitation rather than working around it.
 
 use std::path::PathBuf;
 use std::thread;
