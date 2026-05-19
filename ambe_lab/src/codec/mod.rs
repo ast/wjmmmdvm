@@ -11,6 +11,8 @@
 //! the codebook lookups and harmonic-synthesis math.
 
 pub mod ambe_fields;
+pub mod spectral;
 pub mod tables;
 
 pub use ambe_fields::{AmbeFields, FrameKind};
+pub use spectral::{reconstruct, Spectrum, SpectralState};
