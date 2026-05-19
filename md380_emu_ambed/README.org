@@ -149,9 +149,45 @@ domain socket, serve AMBE-3000F packets.
 #+end_src
 
 Either transport can be disabled by passing =none=. Default TCP port
-2460 follows the AMBEServer convention. Single client at a time;
-concurrent connections are queued through a single codec worker
-thread.
+2460 follows the AMBEServer convention.
+
+*** ⚠ Single audio stream at a time
+
+The daemon is **single-tenant**: it works correctly for one active
+encode/decode stream and will produce audible artefacts if multiple
+clients send overlapping streams concurrently.
+
+The reason is that the AMBE+2 codec is heavily predictive — every
+frame's encoded/decoded output depends on the previous frame's state
+(pitch, per-band V/UV, log-magnitude predictor history, gain γ,
+per-harmonic phase). The MD-380 firmware keeps that state in two
+fixed-address structures (=ambe_mystery= for decode,
+=ambe_en_mystery= for encode), so there is only one such state for
+the whole process.
+
+The server *technically* accepts multiple connections and serialises
+all requests through one codec worker thread, but it does **not**
+isolate per-client codec state. If client A and client B interleave
+frames, each codec call sees the other client's state as its
+"previous frame" predecessor. Symptoms:
+
+- voiced speech gets phase discontinuities and pitch wobble
+- gain prediction (=γ = Δγ + 0.5·γ_prev=) drifts between clients
+- unvoiced/noise stretches are less affected but still corrupted
+
+A real DVstick 30 / ThumbDV hardware dongle has the same limitation
+(one codec instance per dongle, no session concept in the AMBE-3000F
+protocol), so we're matching real-dongle semantics. The DVSwitch
+ecosystem and similar tools serialise access externally — one
+dongle, one stream.
+
+For the SIP↔DMR bridge (one voice call → one codec stream) this is
+exactly what we want. If you ever need to share a single daemon
+across several concurrent audio streams, run multiple daemon
+processes (e.g. one per UDP port) rather than expecting state
+isolation from one process.
+
+*** Protocol notes
 
 The protocol is mostly standard AMBE-3000F packet framing, with one
 non-standard choice: =Channel= packets use a 49-bit raw-AMBE payload
