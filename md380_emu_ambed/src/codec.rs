@@ -33,23 +33,44 @@ use crate::firmware::Firmware;
 // minus 1 (the LSB is the Thumb mode flag); transmuting to a function
 // pointer preserves the LSB and the BLX instruction handles the mode
 // switch correctly.
+//
+// All these symbols are only referenced from the ARM-gated impl
+// blocks below — cfg-gate them so host (x86) builds stay warning-free.
+#[cfg(target_arch = "arm")]
 const AMBE_DECODE_WAV: usize = 0x0805_1249;
+#[cfg(target_arch = "arm")]
 const AMBE_ENCODE_THING: usize = 0x0805_0d91;
 
+#[cfg(target_arch = "arm")]
 const AMBE_INBUFFER: usize = 0x2001_1c8e;
+#[cfg(target_arch = "arm")]
 const AMBE_OUTBUFFER0: usize = 0x2001_1aa8;
+#[cfg(target_arch = "arm")]
 const AMBE_OUTBUFFER1: usize = 0x2001_1b48;
+#[cfg(target_arch = "arm")]
 const AMBE_MYSTERY: usize = 0x2001_1224;
 
+#[cfg(target_arch = "arm")]
 const WAV_INBUFFER0: usize = 0x2000_de82;
+#[cfg(target_arch = "arm")]
 const WAV_INBUFFER1: usize = 0x2000_df22;
+#[cfg(target_arch = "arm")]
 const AMBE_OUTBUFFER: usize = 0x2000_dfc6;
+#[cfg(target_arch = "arm")]
 const AMBE_EN_MYSTERY: usize = 0x2000_c730;
 
-const FRAME_PCM_SAMPLES: usize = 160;
+/// 160 samples = one 20 ms PCM frame at 8 kHz.
+pub const FRAME_PCM_SAMPLES: usize = 160;
+/// 8 bytes per AMBE frame in md380-emu's .amb format (49 voice bits +
+/// 1 status byte = 8 bytes).
+pub const AMBE_FRAME_BYTES: usize = 8;
+
+// The constants below are only referenced from the ARM-gated impl
+// blocks; cfg-gate them to avoid dead_code warnings on host builds.
+#[cfg(target_arch = "arm")]
 const HALF_FRAME_PCM_SAMPLES: usize = 80;
+#[cfg(target_arch = "arm")]
 const AMBE_BITS: usize = 49;
-const AMBE_FRAME_BYTES: usize = 8;
 
 #[cfg(target_arch = "arm")]
 type AmbeDecodeWavFn = unsafe extern "C" fn(
@@ -76,9 +97,12 @@ type AmbeEncodeThingFn = unsafe extern "C" fn(
 
 /// Owns the firmware mapping and provides encode/decode methods.
 ///
-/// **Not Send/Sync**: the firmware has shared mutable state at fixed
-/// memory addresses. A single codec must be used by one thread at a
-/// time. The server queues requests through one worker.
+/// `Send` (can be transferred to another thread) but **not** `Sync`
+/// (cannot be shared by reference for concurrent calls): the firmware
+/// keeps shared mutable state at fixed memory addresses, so a codec
+/// must be used by one thread at a time. The server transfers
+/// ownership to a dedicated worker thread and queues requests
+/// through an mpsc channel.
 pub struct Md380Codec {
     _firmware: Firmware,
 }

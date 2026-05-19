@@ -3,11 +3,8 @@ use std::path::PathBuf;
 use clap::Args;
 use tracing::{info, warn};
 
-use crate::codec::Md380Codec;
+use crate::codec::{Md380Codec, AMBE_FRAME_BYTES, FRAME_PCM_SAMPLES};
 use crate::firmware::Firmware;
-
-const FRAME_PCM_SAMPLES: usize = 160;
-const AMBE_FRAME_BYTES: usize = 8;
 
 #[derive(Args, Debug)]
 pub struct DecodeCmd {

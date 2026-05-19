@@ -11,7 +11,7 @@ mod server;
 #[command(
     name = "md380-emu-ambed",
     version,
-    about = "MD-380 firmware AMBE codec daemon — emulates the Tytera MD-380 firmware via mmap'd native ARM execution. Not for distribution."
+    about = "MD-380 firmware AMBE codec daemon — runs the Tytera MD-380 firmware in-process via mmap'd ARM execution to encode and decode AMBE+2 audio."
 )]
 struct Cli {
     #[command(subcommand)]

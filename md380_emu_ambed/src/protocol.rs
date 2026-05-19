@@ -78,8 +78,6 @@ pub const AMBE_VOICE_BYTES: usize = 7;
 pub enum ProtocolError {
     #[error("I/O: {0}")]
     Io(#[from] io::Error),
-    #[error("bad start byte: expected 0x61, got 0x{0:02x}")]
-    BadStartByte(u8),
     #[error("malformed packet: {0}")]
     Malformed(&'static str),
     #[error("packet too large: length={0}")]
@@ -87,7 +85,7 @@ pub enum ProtocolError {
 }
 
 /// One AMBE-3000F packet, parsed.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Packet {
     /// Control packet — payload includes the field tag and any
     /// sub-fields. We keep it as raw bytes since there are many
@@ -169,9 +167,7 @@ where
         TYPE_CONTROL => Ok(Packet::Control(payload)),
         TYPE_CHANNEL => parse_channel(&payload),
         TYPE_SPEECH => parse_speech(&payload),
-        other => Err(ProtocolError::Malformed(match other {
-            _ => "unknown packet type",
-        })),
+        _ => Err(ProtocolError::Malformed("unknown packet type")),
     }
 }
 
@@ -260,41 +256,79 @@ pub fn amb8_from_channel(bit_count: u8, data: &[u8]) -> Result<[u8; 8], Protocol
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    /// Parse bytes through `read_packet`. Helper for round-trip tests.
+    fn parse_wire(bytes: Vec<u8>) -> Packet {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        rt.block_on(async move {
+            let mut cur = Cursor::new(bytes);
+            read_packet(&mut cur).await.expect("parse")
+        })
+    }
 
     #[test]
-    fn channel_roundtrip() {
+    fn channel_roundtrip_through_wire() {
         let amb8 = [0x00, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x01];
         let pkt = build_channel_from_amb8(&amb8);
         let bytes = pkt.to_bytes();
-        // Re-parse via the same code path.
-        let parsed = match Packet::to_bytes(&pkt) {
-            _ => pkt,
-        };
+        assert_eq!(bytes[0], START_BYTE);
+        assert_eq!(bytes[3], TYPE_CHANNEL);
+
+        // Round-trip: serialize → read_packet → compare.
+        let parsed = parse_wire(bytes);
         if let Packet::Channel { bit_count, data } = parsed {
             assert_eq!(bit_count, 49);
             assert_eq!(data.len(), 7);
             let restored = amb8_from_channel(bit_count, &data).unwrap();
             assert_eq!(restored, amb8);
         } else {
-            panic!("not a channel packet");
+            panic!("expected Channel packet");
         }
-        // Sanity: wire bytes start with 0x61.
-        assert_eq!(bytes[0], START_BYTE);
-        assert_eq!(bytes[3], TYPE_CHANNEL);
     }
 
     #[test]
-    fn speech_packet_layout() {
+    fn speech_roundtrip_through_wire() {
         let samples: Vec<i16> = (0..160).map(|i| (i as i16) * 100).collect();
         let pkt = Packet::Speech(samples.clone());
         let bytes = pkt.to_bytes();
-        assert_eq!(bytes[0], START_BYTE);
-        assert_eq!(bytes[3], TYPE_SPEECH);
-        assert_eq!(bytes[4], SPEECHD_TAG);
-        assert_eq!(bytes[5], 160);
-        // The length field is BE.
-        let length = u16::from_be_bytes([bytes[1], bytes[2]]);
         // length = type(1) + tag(1) + count(1) + samples*2(320) = 323.
-        assert_eq!(length, 323);
+        assert_eq!(u16::from_be_bytes([bytes[1], bytes[2]]), 323);
+
+        let parsed = parse_wire(bytes);
+        if let Packet::Speech(out) = parsed {
+            assert_eq!(out, samples);
+        } else {
+            panic!("expected Speech packet");
+        }
+    }
+
+    #[test]
+    fn read_packet_skips_garbage_before_start_byte() {
+        // Stray bytes before 0x61 should be consumed silently.
+        let pkt = Packet::Control(vec![CTRL_READY]);
+        let mut bytes = vec![0xde, 0xad, 0xbe, 0xef];
+        bytes.extend_from_slice(&pkt.to_bytes());
+        let parsed = parse_wire(bytes);
+        match parsed {
+            Packet::Control(p) => assert_eq!(p, vec![CTRL_READY]),
+            _ => panic!("expected Control"),
+        }
+    }
+
+    #[test]
+    fn amb8_from_channel_rejects_wrong_bit_count() {
+        let data = [0u8; 9];
+        let err = amb8_from_channel(72, &data).expect_err("should reject 72-bit");
+        assert!(matches!(err, ProtocolError::Malformed(_)));
+    }
+
+    #[test]
+    fn amb8_from_channel_rejects_short_data() {
+        let data = [0u8; 3];
+        let err = amb8_from_channel(49, &data).expect_err("should reject short data");
+        assert!(matches!(err, ProtocolError::Malformed(_)));
     }
 }

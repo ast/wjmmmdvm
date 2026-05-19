@@ -66,6 +66,8 @@ pub enum FirmwareError {
         "this binary must be a 32-bit ARM build to execute MD-380 firmware (Thumb-2 code) \
          natively. Detected target_arch = `{0}`. Cross-compile for armv7-unknown-linux-gnueabihf."
     )]
+    // Only constructed on non-ARM builds; harmless on ARM.
+    #[allow(dead_code)]
     WrongArch(&'static str),
 }
 

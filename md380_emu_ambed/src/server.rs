@@ -16,15 +16,12 @@ use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
-use crate::codec::Md380Codec;
+use crate::codec::{Md380Codec, AMBE_FRAME_BYTES, FRAME_PCM_SAMPLES};
 use crate::firmware::Firmware;
 use crate::protocol::{
     self, Packet, AMBE_VOICE_BITS, AMBE_VOICE_BYTES, CTRL_PRODID, CTRL_RESET, CTRL_RATEP,
     CTRL_RATET, CTRL_READY, SPEECH_SAMPLES,
 };
-
-const FRAME_PCM_SAMPLES: usize = 160;
-const AMBE_FRAME_BYTES: usize = 8;
 
 /// Request sent from a connection handler to the codec worker.
 enum CodecRequest {
