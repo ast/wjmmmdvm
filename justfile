@@ -59,3 +59,19 @@ test-roundtrip pcm-in pcm-out: deploy-ambed
 # Placeholder for now.
 logs:
     ssh {{HOST}} 'journalctl --user -u md380-emu-ambed -f' || true
+
+# Local mmdvm_sip listen-dmr that decodes audio via the codec daemon
+# running on the Pi. MMDVMHost on the Pi should be configured with
+# GatewayAddress=<this-workstation-IP>:62031 (see MMDVM-testing.ini).
+BIND       := "0.0.0.0:62031"
+CODEC_TCP  := HOST + ":2460"
+OUTPUT_DIR := "./dmr-rec"
+
+listen-dmr:
+    cargo build --release -p mmdvm_sip
+    @mkdir -p {{OUTPUT_DIR}}
+    RUST_LOG=mmdvm_sip=info \
+      target/release/mmdvm_sip listen-dmr \
+        --bind {{BIND}} \
+        --codec-tcp {{CODEC_TCP}} \
+        --output-dir {{OUTPUT_DIR}}

@@ -50,6 +50,35 @@ use std::io;
 
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use zerocopy::big_endian::{I16, U16};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
+
+/// 4-byte wire header: start byte, length (big-endian, counts TYPE +
+/// payload), type byte. Parsed and built via zerocopy so the
+/// endianness lives in the type, not in scattered byte-twiddling.
+#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
+#[repr(C, packed)]
+pub struct PacketHeader {
+    pub start: u8,
+    pub length: U16,
+    pub type_byte: u8,
+}
+
+/// 2-byte sub-header inside a Channel packet payload.
+#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
+#[repr(C, packed)]
+pub struct ChannelHeader {
+    pub tag: u8, // = CHAND_TAG
+    pub bit_count: u8,
+}
+
+/// 2-byte sub-header inside a Speech packet payload.
+#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
+#[repr(C, packed)]
+pub struct SpeechHeader {
+    pub tag: u8, // = SPEECHD_TAG
+    pub sample_count: u8,
+}
 
 pub const START_BYTE: u8 = 0x61;
 pub const TYPE_CONTROL: u8 = 0x00;
@@ -107,17 +136,27 @@ impl Packet {
             Packet::Control(payload) => build(TYPE_CONTROL, payload),
             Packet::Channel { bit_count, data } => {
                 let mut body = Vec::with_capacity(2 + data.len());
-                body.push(CHAND_TAG);
-                body.push(*bit_count);
+                body.extend_from_slice(
+                    ChannelHeader {
+                        tag: CHAND_TAG,
+                        bit_count: *bit_count,
+                    }
+                    .as_bytes(),
+                );
                 body.extend_from_slice(data);
                 build(TYPE_CHANNEL, &body)
             }
             Packet::Speech(samples) => {
                 let mut body = Vec::with_capacity(2 + samples.len() * 2);
-                body.push(SPEECHD_TAG);
-                body.push(samples.len() as u8);
+                body.extend_from_slice(
+                    SpeechHeader {
+                        tag: SPEECHD_TAG,
+                        sample_count: samples.len() as u8,
+                    }
+                    .as_bytes(),
+                );
                 for s in samples {
-                    body.extend_from_slice(&s.to_be_bytes());
+                    body.extend_from_slice(I16::new(*s).as_bytes());
                 }
                 build(TYPE_SPEECH, &body)
             }
@@ -126,11 +165,15 @@ impl Packet {
 }
 
 fn build(type_byte: u8, payload_after_type: &[u8]) -> Vec<u8> {
-    let length = (1 + payload_after_type.len()) as u16; // includes type byte
-    let mut out = Vec::with_capacity(3 + length as usize);
-    out.push(START_BYTE);
-    out.extend_from_slice(&length.to_be_bytes());
-    out.push(type_byte);
+    // payload_length includes the TYPE byte plus everything after it.
+    let payload_length = (1 + payload_after_type.len()) as u16;
+    let header = PacketHeader {
+        start: START_BYTE,
+        length: U16::new(payload_length),
+        type_byte,
+    };
+    let mut out = Vec::with_capacity(size_of::<PacketHeader>() + payload_after_type.len());
+    out.extend_from_slice(header.as_bytes());
     out.extend_from_slice(payload_after_type);
     out
 }
@@ -141,29 +184,32 @@ where
     R: AsyncRead + Unpin,
 {
     // Resync on a stray byte: skip bytes until we see START_BYTE so a
-    // disconnected client / desync doesn't kill the connection.
+    // disconnected client / desync doesn't kill the connection. Then
+    // read the rest of the header into a buffer and parse it via a
+    // zerocopy view of `PacketHeader`.
+    let mut hdr_buf = [0u8; size_of::<PacketHeader>()];
     loop {
-        let b = reader.read_u8().await?;
-        if b == START_BYTE {
+        reader.read_exact(&mut hdr_buf[..1]).await?;
+        if hdr_buf[0] == START_BYTE {
             break;
         }
-        // Drop the stray; loop until we find a packet boundary.
     }
-    let mut len_buf = [0u8; 2];
-    reader.read_exact(&mut len_buf).await?;
-    let length = u16::from_be_bytes(len_buf);
+    reader.read_exact(&mut hdr_buf[1..]).await?;
+    let hdr = PacketHeader::ref_from_bytes(&hdr_buf[..])
+        .expect("header buf has exactly the right size");
+
+    let length = hdr.length.get();
     if length == 0 {
         return Err(ProtocolError::Malformed("zero length"));
     }
     if length > 4096 {
         return Err(ProtocolError::TooLarge(length));
     }
-    let type_byte = reader.read_u8().await?;
-    let payload_len = length as usize - 1;
+    let payload_len = length as usize - 1; // length includes the type byte
     let mut payload = vec![0u8; payload_len];
     reader.read_exact(&mut payload).await?;
 
-    match type_byte {
+    match hdr.type_byte {
         TYPE_CONTROL => Ok(Packet::Control(payload)),
         TYPE_CHANNEL => parse_channel(&payload),
         TYPE_SPEECH => parse_speech(&payload),
@@ -183,40 +229,43 @@ where
 }
 
 fn parse_channel(payload: &[u8]) -> Result<Packet, ProtocolError> {
-    if payload.len() < 2 {
-        return Err(ProtocolError::Malformed("channel payload < 2 bytes"));
-    }
-    if payload[0] != CHAND_TAG {
+    let (hdr_bytes, data) = payload
+        .split_at_checked(size_of::<ChannelHeader>())
+        .ok_or(ProtocolError::Malformed("channel payload < 2 bytes"))?;
+    let hdr = ChannelHeader::ref_from_bytes(hdr_bytes)
+        .expect("split_at_checked returned exact header size");
+    if hdr.tag != CHAND_TAG {
         return Err(ProtocolError::Malformed("channel: missing CHAND tag"));
     }
-    let bit_count = payload[1];
-    let expected = (bit_count as usize).div_ceil(8);
-    let data = &payload[2..];
+    let expected = (hdr.bit_count as usize).div_ceil(8);
     if data.len() < expected {
         return Err(ProtocolError::Malformed("channel: truncated AMBE data"));
     }
     Ok(Packet::Channel {
-        bit_count,
+        bit_count: hdr.bit_count,
         data: data[..expected].to_vec(),
     })
 }
 
 fn parse_speech(payload: &[u8]) -> Result<Packet, ProtocolError> {
-    if payload.len() < 2 {
-        return Err(ProtocolError::Malformed("speech payload < 2 bytes"));
-    }
-    if payload[0] != SPEECHD_TAG {
+    let (hdr_bytes, data) = payload
+        .split_at_checked(size_of::<SpeechHeader>())
+        .ok_or(ProtocolError::Malformed("speech payload < 2 bytes"))?;
+    let hdr = SpeechHeader::ref_from_bytes(hdr_bytes)
+        .expect("split_at_checked returned exact header size");
+    if hdr.tag != SPEECHD_TAG {
         return Err(ProtocolError::Malformed("speech: missing SPEECHD tag"));
     }
-    let samples = payload[1] as usize;
-    let data = &payload[2..];
-    if data.len() < samples * 2 {
+    let samples = hdr.sample_count as usize;
+    let want = samples * size_of::<I16>();
+    if data.len() < want {
         return Err(ProtocolError::Malformed("speech: truncated PCM data"));
     }
-    let mut out = Vec::with_capacity(samples);
-    for chunk in data[..samples * 2].chunks_exact(2) {
-        out.push(i16::from_be_bytes([chunk[0], chunk[1]]));
-    }
+    // View the bytes as a slice of big-endian i16s; convert to native
+    // i16 for the Vec<i16> we hand back to callers.
+    let be_samples = <[I16]>::ref_from_bytes(&data[..want])
+        .map_err(|_| ProtocolError::Malformed("speech: PCM alignment"))?;
+    let out: Vec<i16> = be_samples.iter().map(|s| s.get()).collect();
     Ok(Packet::Speech(out))
 }
 

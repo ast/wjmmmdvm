@@ -7,6 +7,7 @@ pub mod dmr_config;
 pub mod dmr_data;
 pub mod dmr_gps;
 pub mod packet;
+pub mod voice_burst;
 
 pub use dmr_alias::DmrAlias;
 pub use dmr_config::DmrConfig;
