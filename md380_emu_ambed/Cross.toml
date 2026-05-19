@@ -1,0 +1,11 @@
+[build]
+# musleabihf gives us a static binary that runs on aarch64 Pi OS
+# without needing libc6:armhf multiarch installed.
+default-target = "armv7-unknown-linux-musleabihf"
+
+# The firmware/ directory under this crate is mounted automatically
+# (cross mounts the workspace), so include_bytes! in firmware.rs picks
+# up the files at compile time.
+
+[target.armv7-unknown-linux-musleabihf]
+# Cross's default image bundles musl + gcc for this triple.

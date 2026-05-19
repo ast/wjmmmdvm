@@ -1,0 +1,117 @@
+#+TITLE: md380_emu_ambed — MD-380 firmware AMBE codec daemon
+#+AUTHOR: Albin Stigo (SM6WJM)
+#+OPTIONS: toc:2 num:nil
+
+* WARNING — emulates MD-380 firmware; not for distribution
+:PROPERTIES:
+:CUSTOM_ID: warning
+:END:
+
+This crate is a Rust port of Travis Goodspeed's
+[[https://github.com/travisgoodspeed/md380tools][md380-emu]] approach:
+it loads the Tytera MD-380 firmware blob into process memory and calls
+into its AMBE+2 codec routines directly to encode / decode audio.
+
+- The MD-380 firmware contains DVSI's AMBE+2 implementation, which is
+  patent-encumbered and copyrighted. **This crate does not embed or
+  redistribute the firmware** — it loads a user-supplied
+  =D002.032.img= and =d02032-core.img= at runtime, the same way
+  upstream md380-emu does.
+- =publish = false= is set in =Cargo.toml=.
+- Excluded from the workspace =default-members=, so =cargo build= at
+  the repo root does *not* build it. Use =cargo build -p
+  md380_emu_ambed= explicitly.
+- AMBE+2 is patented (DVSI; key patent =US 8,359,197B2= expires May
+  2028). Personal / ham research use only.
+
+* What this is
+
+A long-running daemon that emulates the MD-380's AMBE+2 codec and
+exposes it over a Unix domain socket using the **AMBE-3000F packet
+protocol** — the same protocol DVstick 30 and ThumbDV USB dongles
+speak. This makes the daemon a drop-in software replacement for
+hardware dongles in the SIP-DMR bridge.
+
+** vs. =ambe_lab=
+
+| Crate              | Purpose                          | Codec backend                       |
+|--------------------+----------------------------------+-------------------------------------|
+| =ambe_lab=         | Research / reverse engineering   | Pure-Rust mbelib port (lower fidelity) OR md380-emu subprocess |
+| =md380_emu_ambed=  | Production-style codec service   | In-process MD-380 firmware emulation (matches md380-emu's output exactly) |
+
+* Deployment
+
+** This binary runs ONLY on 32-bit ARM Linux
+
+The MD-380 firmware is ARM Cortex-M4 Thumb-2 code. To execute it
+natively, the host CPU must be in 32-bit ARM mode. That means:
+
+- **Raspberry Pi OS 32-bit (armhf)**: works natively. ✓
+- **Raspberry Pi OS 64-bit (aarch64)**: requires armhf multilib. Build
+  the binary for =armv7-unknown-linux-gnueabihf= target. ✓
+- **x86 / x86_64 Linux, macOS, anything non-ARM**: fails at runtime
+  with a clear error. Cross-compile to armhf and copy to a Pi. ✗
+
+Cross-compiling from an x86 workstation:
+
+#+begin_src bash
+  rustup target add armv7-unknown-linux-gnueabihf
+  sudo apt install gcc-arm-linux-gnueabihf
+  cargo build -p md380_emu_ambed --target armv7-unknown-linux-gnueabihf
+  scp target/armv7-unknown-linux-gnueabihf/debug/md380-emu-ambed mmdvm:~/
+#+end_src
+
+* Configuration
+
+The daemon requires two user-supplied firmware artefacts:
+
+| Artefact            | Default load address | Source                                                 |
+|---------------------+----------------------+--------------------------------------------------------|
+| Firmware image      | =0x0800C000=         | =~/src/md380tools/firmware/unwrapped/D002.032.img=     |
+| RAM core image      | =0x20000000=         | =~/src/md380tools/cores/d02032-core.img= (committed in repo) |
+
+Provide their paths via CLI flags or environment variables:
+
+#+begin_src bash
+  export MD380_FIRMWARE=$HOME/src/md380tools/firmware/unwrapped/D002.032.img
+  export MD380_CORE=$HOME/src/md380tools/cores/d02032-core.img
+#+end_src
+
+* Subcommands (current scope)
+
+** =encode=
+
+Read raw PCM (s16le, 8 kHz mono), encode to 8-byte AMBE frames using
+the loaded firmware, write to output.
+
+#+begin_src bash
+  md380-emu-ambed encode input.pcm output.ambe
+#+end_src
+
+** =decode=
+
+Read 8-byte AMBE frames, decode to PCM via the firmware.
+
+#+begin_src bash
+  md380-emu-ambed decode input.ambe output.pcm
+#+end_src
+
+These mirror =ambe_lab='s file-based subcommands so we can A/B-compare
+output for correctness validation.
+
+* Planned (next PR)
+
+- =serve= subcommand: long-running daemon, Unix socket, AMBE-3000F
+  packet protocol. Single client at a time; concurrent connections
+  queued onto a single codec worker.
+
+* Acknowledgements
+
+Built on the shoulders of:
+
+- Travis Goodspeed (KK4VCZ), md380tools / md380-emu — the firmware
+  loading and symbol map.
+- Tytera, who built the MD-380 firmware.
+- DVSI, who licensed the AMBE+2 codec to Tytera.
+- The md380tools community for the maintained firmware blobs and
+  symbol tables.

@@ -1,0 +1,19 @@
+[package]
+name = "md380_emu_ambed"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "AMBE codec daemon that emulates the Tytera MD-380 firmware. Requires a user-supplied D002.032 firmware image and RAM core dump at runtime; redistributable patent-encumbered DVSI code is not embedded."
+
+[[bin]]
+name = "md380-emu-ambed"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+thiserror = "1"
+anyhow = "1"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal", "sync"] }
