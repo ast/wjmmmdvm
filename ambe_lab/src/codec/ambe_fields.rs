@@ -21,6 +21,7 @@
 //! (which matches the firmware's own buffer at `0x20011c8e`).
 
 use crate::ambe_frame::AmbeFrame;
+use crate::codec::tables::{DG_TABLE, L_TABLE, SAMPLE_RATE_HZ, VUV_TABLE, W0_TABLE};
 
 /// Decoded parameter indices for one AMBE+2 frame. Each field is the
 /// index into its respective codebook in mbelib (`AmbeW0table`,
@@ -84,6 +85,46 @@ impl AmbeFields {
             126..=127 => FrameKind::Tone,
             _ => FrameKind::Voice,
         }
+    }
+
+    /// Fundamental pitch frequency in Hz for normal voice frames.
+    /// `None` for silence / tone / erasure frames (b0 ≥ 120) since
+    /// those use reserved W0 codepoints without a table entry.
+    pub fn pitch_hz(&self) -> Option<f32> {
+        (self.w0 < 120).then(|| W0_TABLE[self.w0 as usize] * SAMPLE_RATE_HZ)
+    }
+
+    /// Number of harmonics `L` covering 0–4 kHz at the decoded pitch.
+    /// `None` for non-voice frames.
+    pub fn harmonic_count(&self) -> Option<u8> {
+        (self.w0 < 120).then(|| L_TABLE[self.w0 as usize])
+    }
+
+    /// Quantized gain change `Δγ` from mbelib's `AmbeDg` table. This
+    /// is **not** absolute dB — the codec computes the absolute log
+    /// magnitude as `γ = Δγ + 0.5 · γ_prev`, so the per-frame value
+    /// has to be combined with prior-frame state to recover real
+    /// dB-equivalent loudness. `None` for non-voice frames.
+    pub fn gain_delta_log_mag(&self) -> Option<f32> {
+        (self.w0 < 120).then(|| DG_TABLE[self.gain as usize])
+    }
+
+    /// V/UV (voiced/unvoiced) decision per band — 8 entries, each
+    /// `true` if that frequency band is voiced (harmonic) or `false`
+    /// if unvoiced (noise-like).
+    ///
+    /// The pattern is selected by `b1` ∈ [0, 31] from mbelib's
+    /// `AmbeVuv` table. `None` for non-voice frames (silence forces
+    /// all bands to unvoiced anyway, per mbelib).
+    pub fn voicing_pattern(&self) -> Option<[bool; 8]> {
+        if self.w0 >= 120 {
+            return None;
+        }
+        let row = &VUV_TABLE[self.vuv as usize];
+        Some([
+            row[0] == 1, row[1] == 1, row[2] == 1, row[3] == 1,
+            row[4] == 1, row[5] == 1, row[6] == 1, row[7] == 1,
+        ])
     }
 }
 
@@ -150,6 +191,33 @@ mod tests {
         b[0] = 1;
         b[5] = 1;
         assert_eq!(pack(&b, &[0, 5]), 3);
+    }
+
+    #[test]
+    fn accessors_return_none_for_non_voice() {
+        let f = AmbeFrame::from_bytes(SILENCE_FRAME);
+        let fields = AmbeFields::from_frame(&f);
+        assert!(fields.pitch_hz().is_none());
+        assert!(fields.harmonic_count().is_none());
+        assert!(fields.gain_delta_log_mag().is_none());
+        assert!(fields.voicing_pattern().is_none());
+    }
+
+    #[test]
+    fn voice_frame_accessors_return_sane_values() {
+        // Construct a synthetic frame with w0 = 0 (highest pitch in
+        // the voice range; ~399.8 Hz at the sample rate of 8 kHz).
+        // All other bits zeroed.
+        let raw = [0; AMBE_BYTES_PER_FRAME];
+        let f = AmbeFrame::from_bytes(raw);
+        let fields = AmbeFields::from_frame(&f);
+        assert_eq!(fields.w0, 0);
+        let pitch = fields.pitch_hz().expect("voice frame should have pitch");
+        // 0.049971 cyc/sample × 8000 Hz ≈ 399.77 Hz
+        assert!((pitch - 399.77).abs() < 1.0, "pitch_hz was {pitch}");
+        assert_eq!(fields.harmonic_count(), Some(9));
+        assert_eq!(fields.gain_delta_log_mag(), Some(-2.0));
+        assert_eq!(fields.voicing_pattern(), Some([true; 8]));
     }
 
     #[test]

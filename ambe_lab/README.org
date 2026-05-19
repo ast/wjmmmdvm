@@ -269,6 +269,39 @@ erasure/silence/tone. The frames still decode to audible audio via
 md380-emu itself, so this is a quirk of how the encoder uses the
 reserved W0 codepoints, not a bug in our unpacker.
 
+*** =--interpret=
+
+Pass =--interpret= to translate the raw indices into physical values:
+pitch frequency in Hz (=f0=), harmonic count =L=, gain delta =Δγ=, and
+the per-band V/UV pattern (V = voiced, u = unvoiced).
+
+#+begin_src bash
+  cargo run -p ambe_lab -- dump-fields corpus/noise-amp30-seed1-2000ms.ambe --start 30 --count 5 --interpret
+#+end_src
+
+#+begin_src text
+  idx  kind       w0  f0(Hz)   L    g       Δγ      V/UV
+   30  voice     119    65.0  56   30    5.778  uuuuuuuu
+   31  voice      80   117.8  31   30    5.778  uuuuuuuu
+   32  voice      92    98.0  37   30    5.778  uuuuuuuu
+#+end_src
+
+For non-voice frames (silence / tone / erasure, where W0 ≥ 120 and
+has no entry in mbelib's tables) the physical columns show =----=.
+
+Physical accessors are =AmbeFields::pitch_hz= /
+=AmbeFields::harmonic_count= / =AmbeFields::gain_delta_log_mag= /
+=AmbeFields::voicing_pattern=. Note: =gain_delta_log_mag= returns the
+quantized **delta** =Δγ=, not an absolute dB value — the codec
+recovers absolute gain via =γ = Δγ + 0.5 · γ_prev=, so it needs
+inter-frame state to give true dB.
+
+Tone-frame interpretation (=b0 ∈ {126, 127}=) is not implemented:
+mbelib itself doesn't decode tone frames — it just returns a sentinel
+=3=. Our codec acknowledges the frame kind but cannot extract a tone
+frequency without further reverse engineering of md380-emu's tone-mode
+encoding.
+
 ** =diff-ambe=
 
 Compare two =.ambe= files frame-by-frame, reporting the Hamming

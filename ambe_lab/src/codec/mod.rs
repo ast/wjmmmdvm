@@ -11,5 +11,6 @@
 //! the codebook lookups and harmonic-synthesis math.
 
 pub mod ambe_fields;
+pub mod tables;
 
 pub use ambe_fields::{AmbeFields, FrameKind};
