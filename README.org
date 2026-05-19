@@ -314,22 +314,6 @@ REGISTER client and a passive DMR listener.
 Build, configuration and per-subcommand usage live in
 [[file:mmdvm_sip/README.org][mmdvm_sip/README.org]].
 
-* ambe_lab — AMBE-3000F research harness (not for distribution)
-:PROPERTIES:
-:CUSTOM_ID: ambe-lab
-:END:
-
-Private research crate at [[file:ambe_lab/][ambe_lab/]] for experimenting
-with the AMBE+2 codec against a local [[https://github.com/travisgoodspeed/md380tools][md380-emu]]
-instance. **Do not publish or distribute binaries built from this crate**
-— AMBE+2 is patent-encumbered and the md380-emu codec was extracted from
-proprietary firmware. =publish = false= is set and the crate is excluded
-from the workspace's =default-members= so =cargo build= at the repo root
-does *not* build it.
-
-See [[file:ambe_lab/README.org][ambe_lab/README.org]] for the warning in
-full, build instructions, and the =tone= / =encode= / =decode= subcommands.
-
 * MD-380 note
 
 To flash an MD-380 from Windows 10 you need to install the STM Device in DFU
@@ -345,6 +329,5 @@ mode driver.
   ├── MMDVM-testing.ini   # Testing variant — streams DMR frames to a LAN host
   ├── scripts/
   │   └── flash.sh        # STM32 flashing script (uses pinctrl)
-  ├── mmdvm_sip/          # Rust DMR ↔ SIP bridge (experimental)
-  └── ambe_lab/           # AMBE+2 research harness — NOT FOR DISTRIBUTION
+  └── mmdvm_sip/          # Rust DMR ↔ SIP bridge (experimental)
 #+end_src

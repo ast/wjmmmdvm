@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["mmdvm_sip", "ambe_lab", "md380_emu_ambed"]
+members = ["mmdvm_sip", "md380_emu_ambed"]
 
-# Only mmdvm_sip is built by default. ambe_lab and md380_emu_ambed
-# both link/embed patent-encumbered DVSI-derived code (mbelib tables
-# and MD-380 firmware respectively) and are opt-in via
-# `cargo build -p <name>` to make accidental distribution harder.
+# Only mmdvm_sip is built by default. md380_emu_ambed embeds
+# patent-encumbered MD-380 firmware at compile time and is opt-in via
+# `cargo build -p md380_emu_ambed` to make accidental distribution
+# harder.
 default-members = ["mmdvm_sip"]

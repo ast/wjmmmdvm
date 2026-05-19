@@ -2,27 +2,35 @@
 #+AUTHOR: Albin Stigo (SM6WJM)
 #+OPTIONS: toc:2 num:nil
 
-* WARNING — emulates MD-380 firmware; not for distribution
+* About the MD-380 firmware emulation
 :PROPERTIES:
-:CUSTOM_ID: warning
+:CUSTOM_ID: about
 :END:
 
 This crate is a Rust port of Travis Goodspeed's
 [[https://github.com/travisgoodspeed/md380tools][md380-emu]] approach:
-it loads the Tytera MD-380 firmware blob into process memory and calls
-into its AMBE+2 codec routines directly to encode / decode audio.
+it loads the Tytera MD-380 firmware blob into process memory and
+calls into its AMBE+2 codec routines directly to encode and decode
+audio.
 
-- The MD-380 firmware contains DVSI's AMBE+2 implementation, which is
-  patent-encumbered and copyrighted. **This crate does not embed or
-  redistribute the firmware** — it loads a user-supplied
-  =D002.032.img= and =d02032-core.img= at runtime, the same way
-  upstream md380-emu does.
-- =publish = false= is set in =Cargo.toml=.
-- Excluded from the workspace =default-members=, so =cargo build= at
-  the repo root does *not* build it. Use =cargo build -p
-  md380_emu_ambed= explicitly.
-- AMBE+2 is patented (DVSI; key patent =US 8,359,197B2= expires May
-  2028). Personal / ham research use only.
+All the building blocks have been publicly available for years:
+
+- The MD-380 firmware blob is downloadable from archives like
+  =md380.org/firmware/=, fetched as part of the upstream
+  [[https://github.com/travisgoodspeed/md380tools][md380tools]] build.
+- =md380-emu= (Goodspeed's original C implementation) has been on
+  GitHub since 2016.
+- [[https://github.com/szechyjs/mbelib][mbelib]] (the reference
+  open-source AMBE+2 decoder) has been on GitHub since 2010.
+- AMBE+2 is covered by DVSI patents; the relevant key patent
+  =US 8,359,197B2= expires May 2028.
+
+The firmware blob is embedded at build time via =include_bytes!=
+from =firmware/D002.032.img= and =firmware/d02032-core.img= (both
+gitignored). See [[file:firmware/README.md][firmware/README.md]] for
+where to source them — typically a one-liner
+=just sync-firmware= from the workspace root pulls them from a
+local md380tools checkout.
 
 * What this is
 
@@ -31,13 +39,6 @@ exposes it over a Unix domain socket using the **AMBE-3000F packet
 protocol** — the same protocol DVstick 30 and ThumbDV USB dongles
 speak. This makes the daemon a drop-in software replacement for
 hardware dongles in the SIP-DMR bridge.
-
-** vs. =ambe_lab=
-
-| Crate              | Purpose                          | Codec backend                       |
-|--------------------+----------------------------------+-------------------------------------|
-| =ambe_lab=         | Research / reverse engineering   | Pure-Rust mbelib port (lower fidelity) OR md380-emu subprocess |
-| =md380_emu_ambed=  | Production-style codec service   | In-process MD-380 firmware emulation (matches md380-emu's output exactly) |
 
 * Deployment
 
@@ -61,21 +62,61 @@ Cross-compiling from an x86 workstation:
   scp target/armv7-unknown-linux-gnueabihf/debug/md380-emu-ambed mmdvm:~/
 #+end_src
 
-* Configuration
+* Firmware files
 
-The daemon requires two user-supplied firmware artefacts:
+Two files have to live in =md380_emu_ambed/firmware/= before the
+crate will build — they're embedded into the binary via
+=include_bytes!= (the directory is =.gitignore='d):
 
-| Artefact            | Default load address | Source                                                 |
-|---------------------+----------------------+--------------------------------------------------------|
-| Firmware image      | =0x0800C000=         | =~/src/md380tools/firmware/unwrapped/D002.032.img=     |
-| RAM core image      | =0x20000000=         | =~/src/md380tools/cores/d02032-core.img= (committed in repo) |
+| File              | Size (bytes) | Load address  | SHA-256                                                            |
+|-------------------+--------------+---------------+--------------------------------------------------------------------|
+| =D002.032.img=    |      994 304 | =0x0800C000=  | =c0351f250a834660641bca3b06be931c80cc1ed0ef808356c550b99cd0f4c632= |
+| =d02032-core.img= |      131 072 | =0x20000000=  | =d40398183e9aa8db6288a62d9a0e0c233cb143ef5633680abd829cc03c719f66= |
 
-Provide their paths via CLI flags or environment variables:
+** Getting them via md380tools
+
+The simplest path is to use the upstream
+[[https://github.com/travisgoodspeed/md380tools][md380tools]] project,
+which fetches the firmware blob from =md380.org/firmware/= and unwraps
+it, and which already ships =d02032-core.img= in its =cores/=
+directory.
 
 #+begin_src bash
-  export MD380_FIRMWARE=$HOME/src/md380tools/firmware/unwrapped/D002.032.img
-  export MD380_CORE=$HOME/src/md380tools/cores/d02032-core.img
+  # 1. Clone md380tools (skip if you already have it)
+  git clone https://github.com/travisgoodspeed/md380tools ~/src/md380tools
+
+  # 2. Fetch + unwrap the D002.032 firmware (no compiler needed —
+  #    uses Python + pycryptodome)
+  cd ~/src/md380tools
+  pip install --user pycryptodome
+  make original_D02
+  # → produces firmware/unwrapped/D002.032.img
+
+  # 3. Copy both files into md380_emu_ambed/firmware/
+  cd ~/path/to/this/repo
+  just sync-firmware
 #+end_src
+
+If your md380tools checkout is somewhere other than =~/src/md380tools=,
+point =MD380TOOLS= at it:
+
+#+begin_src bash
+  MD380TOOLS=/opt/md380tools just sync-firmware
+#+end_src
+
+Or just copy the two files into =md380_emu_ambed/firmware/= manually.
+
+** Verifying you have the right files
+
+#+begin_src bash
+  cd md380_emu_ambed/firmware
+  sha256sum D002.032.img d02032-core.img
+#+end_src
+
+Compare against the SHA-256s in the table above. If they don't match,
+the build will still succeed but the embedded firmware may not match
+the addresses our codec wrapper expects, and you'll get unexpected
+output or crashes.
 
 * Subcommands (current scope)
 
@@ -96,14 +137,28 @@ Read 8-byte AMBE frames, decode to PCM via the firmware.
   md380-emu-ambed decode input.ambe output.pcm
 #+end_src
 
-These mirror =ambe_lab='s file-based subcommands so we can A/B-compare
-output for correctness validation.
+File-based subcommands for offline correctness validation.
 
-* Planned (next PR)
+** =serve=
 
-- =serve= subcommand: long-running daemon, Unix socket, AMBE-3000F
-  packet protocol. Single client at a time; concurrent connections
-  queued onto a single codec worker.
+Run as a long-lived daemon, accept connections on TCP and/or a Unix
+domain socket, serve AMBE-3000F packets.
+
+#+begin_src bash
+  md380-emu-ambed serve --tcp 0.0.0.0:2460 --unix /tmp/md380-emu-ambed.sock
+#+end_src
+
+Either transport can be disabled by passing =none=. Default TCP port
+2460 follows the AMBEServer convention. Single client at a time;
+concurrent connections are queued through a single codec worker
+thread.
+
+The protocol is mostly standard AMBE-3000F packet framing, with one
+non-standard choice: =Channel= packets use a 49-bit raw-AMBE payload
+(7 data bytes) rather than the DMR-rate 72-bit FEC-included payload.
+This matches what the MD-380 firmware natively produces; if you need
+true DMR-rate compatibility for hardware-dongle clients, the upstream
+SIP↔DMR bridge owns the Golay FEC layer (see =mmdvm_sip=).
 
 * Acknowledgements
 
