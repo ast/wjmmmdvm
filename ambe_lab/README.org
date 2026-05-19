@@ -1,0 +1,230 @@
+#+TITLE: ambe_lab — AMBE+2 research harness
+#+AUTHOR: Albin Stigo (SM6WJM)
+#+OPTIONS: toc:2 num:nil
+
+* WARNING — not for distribution
+:PROPERTIES:
+:CUSTOM_ID: warning
+:END:
+
+This crate exists **only** as a private development harness for
+reverse-engineering / experimenting with AMBE+2 against a local
+[[https://github.com/travisgoodspeed/md380tools][md380-emu]] instance.
+
+- =publish = false= is set in =Cargo.toml=.
+- The crate is *excluded* from the workspace's =default-members=, so the
+  top-level =cargo build= does not build it. Use =cargo build -p
+  ambe_lab= explicitly.
+- AMBE+2 is patented (DVSI) and the md380-emu codec was extracted from
+  proprietary firmware. **Do not publish, package, or distribute
+  binaries built from this crate.** Personal/ham research use only.
+
+* What this is
+
+A library + small CLI that drives the file-based =md380-emu= binary
+from [[https://github.com/travisgoodspeed/md380tools][md380tools]] as a
+subprocess to encode 8 kHz PCM ↔ raw 8-byte AMBE frames.
+
+Initial purpose is to build a **golden test vector corpus**: feed known
+PCM into md380-emu, capture the AMBE bytes, store the pair. Those pairs
+are then the reference for any future pure-Rust implementation.
+
+* Building ambe_lab
+
+#+begin_src bash
+  cargo build -p ambe_lab
+  cargo run -p ambe_lab -- --help
+#+end_src
+
+* Setting up md380-emu
+
+The =md380-emu= binary is an ARM-Linux executable that runs the
+AMBE+2 routines extracted from the MD-380 radio firmware. On x86 it
+runs transparently under =qemu-user=.
+
+** Prerequisites (Debian / Ubuntu)
+
+The emulator runs Linux-userland ARM code under =qemu-user=, so we
+need the *Linux* ARM cross-compiler — **not** the bare-metal
+=arm-none-eabi-gcc=. The top-level =make= in =md380tools= builds
+patches against the radio firmware and *does* want the bare-metal
+toolchain; we don't need any of that for the emulator path.
+
+#+begin_src bash
+  sudo apt install \
+      gcc-arm-linux-gnueabi \
+      binutils-arm-linux-gnueabi \
+      qemu-user
+  pip install --user pycryptodome    # needed by md380-fw's AES unwrap step
+#+end_src
+
+** Build
+
+Assuming the repo is cloned at =~/src/md380tools= (this is what the
+harness defaults to via =MD380_EMU=):
+
+#+begin_src bash
+  cd ~/src/md380tools
+
+  # Fetch and unwrap the D002.032 firmware blob the emulator runs
+  # against. Uses curl + Python — no compiler involved.
+  make original_D02
+  # → produces firmware/unwrapped/D002.032.img
+
+  # Build the emulator itself. Uses arm-linux-gnueabi-gcc.
+  cd emulator
+  make md380-emu
+  # → produces ./md380-emu (static ARM binary, runs under qemu-user)
+#+end_src
+
+The =cores/d02032-core.img= RAM image is already checked into the
+repo, so no extra fetch is needed.
+
+**Do *not* run the top-level =make=** unless you specifically want the
+applet/patch build — it fails without =gcc-arm-none-eabi= installed
+and has nothing to do with the emulator.
+
+** Point the harness at the binary
+
+#+begin_src bash
+  export MD380_EMU=$HOME/src/md380tools/emulator/md380-emu
+#+end_src
+
+Or pass =--binary <path>= to each =encode= / =decode= invocation.
+
+* Subcommands
+
+** =tone=
+
+Generate a sine-wave PCM file (s16le, 8 kHz mono). Doesn't need
+md380-emu.
+
+#+begin_src bash
+  cargo run -p ambe_lab -- tone --frequency 1000 --seconds 3 tone.pcm
+#+end_src
+
+** =encode=
+
+Spawn =md380-emu -e=, feed it the PCM file, store the AMBE bytes (no
+=.amb= header; just N×8-byte frames concatenated).
+
+#+begin_src bash
+  cargo run -p ambe_lab -- encode tone.pcm tone.ambe
+#+end_src
+
+⚠ md380-emu's encoder discards the **first 25 frames (~500 ms)** of
+its output as "start noise". Pad your PCM input with at least 0.5 s
+of silence at the start if you want the full signal encoded.
+
+** =decode=
+
+Spawn =md380-emu -d=, feed it the AMBE frames, write the decoded PCM.
+
+#+begin_src bash
+  cargo run -p ambe_lab -- decode tone.ambe roundtrip.pcm
+#+end_src
+
+Listen to a PCM dump with:
+
+#+begin_src bash
+  aplay -f S16_LE -r 8000 -c 1 roundtrip.pcm
+#+end_src
+
+** =capture-corpus=
+
+Generate a directory of golden =(input.pcm, output.ambe)= pairs plus a
+=manifest.json= describing them. These vectors are the validation
+oracle for any future pure-Rust codec implementation — every encoder /
+decoder we write later must reproduce these bytes (decoder) or stay
+close to them (encoder).
+
+#+begin_src bash
+  cargo run -p ambe_lab -- capture-corpus corpus/
+#+end_src
+
+Default stimulus set (13 entries, ~25 s of audio):
+
+- *Silence*: 2 s
+- *Sine tones*: 300 / 500 / 1000 / 2000 / 3000 Hz at amplitude 0.5
+- *Amplitude sweep*: 1 kHz at amplitude 0.1 and 0.9 (tests amplitude
+  quantization independently of frequency)
+- *Frequency sweep*: 300 Hz → 3400 Hz over 3 s
+- *White noise*: 2 s each at two RNG seeds
+- *Impulse*: full-scale single sample inside a 1 s buffer
+- *Dual-tone*: 700 + 1200 Hz simultaneously (multi-pitch test)
+
+Each input is pre-padded with 500 ms of silence by default to absorb
+md380-emu's encoder warm-up — control via =--warmup-pad-ms=.
+
+*** Output layout
+
+#+begin_src text
+  corpus/
+  ├── manifest.json
+  ├── silence-2000ms.pcm
+  ├── silence-2000ms.ambe
+  ├── sine-1000hz-amp50-2000ms.pcm
+  ├── sine-1000hz-amp50-2000ms.ambe
+  ├── sweep-300-3400hz-3000ms.pcm
+  ├── sweep-300-3400hz-3000ms.ambe
+  ├── noise-amp30-seed1-2000ms.pcm
+  ├── noise-amp30-seed1-2000ms.ambe
+  ├── impulse-at500ms-of1000ms.pcm
+  ├── impulse-at500ms-of1000ms.ambe
+  ├── dual-700+1200hz-2000ms.pcm
+  ├── dual-700+1200hz-2000ms.ambe
+  └── ... (one .pcm + .ambe pair per stimulus)
+#+end_src
+
+*** Manifest schema
+
+#+begin_src json
+  {
+    "format": {
+      "sample_rate_hz": 8000,
+      "pcm_format": "s16le",
+      "pcm_samples_per_frame": 160,
+      "ambe_frame_bytes": 8,
+      "frame_ms": 20,
+      "encoder_warmup_pad_ms": 500
+    },
+    "captured_at_unix": 1747641600,
+    "md380_emu_binary": "/home/albin/.local/bin/md380-emu",
+    "entries": [
+      {
+        "name": "sine-1000hz-amp50-2000ms",
+        "pcm_path": "sine-1000hz-amp50-2000ms.pcm",
+        "ambe_path": "sine-1000hz-amp50-2000ms.ambe",
+        "stimulus": {
+          "kind": "sine_tone",
+          "frequency_hz": 1000.0,
+          "amplitude": 0.5,
+          "duration_seconds": 2.0
+        },
+        "pcm_samples": 20000,
+        "ambe_frames": 100
+      }
+    ]
+  }
+#+end_src
+
+The =stimulus= field is enough to regenerate any =.pcm= deterministically
+(useful when you want to confirm a captured pair hasn't drifted).
+
+* Audio format reference
+
+- PCM: signed 16-bit *little-endian*, 8 kHz mono. 20 ms frame = 160
+  samples = 320 bytes.
+- AMBE frame (md380-emu's =.amb= format): **8 bytes per 20 ms frame**.
+  - byte[0]: status (0 = good)
+  - bytes[1..7]: 48 voice bits, MSB-first
+  - byte[7]: the 49th voice bit in its LSB
+  - **No FEC** — this is the raw 49-bit voice frame. The DMR wire
+    format (DMRD payload) adds a 23-bit Golay code per frame for a
+    total of 72 bits.
+
+The on-disk =.ambe= files this CLI writes contain just the frame
+bytes — they do *not* carry md380-emu's 4-byte =".amb"= magic. We
+strip it on encode and prepend a different 4-byte placeholder on
+decode (because the upstream binary has a magic-check bug that
+=exit(1)='s on the correct header).

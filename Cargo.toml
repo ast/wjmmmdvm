@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["mmdvm_sip", "ambe_lab"]
+
+# Only mmdvm_sip is built by default. ambe_lab is opt-in via
+# `cargo build -p ambe_lab` to make accidental distribution harder.
+default-members = ["mmdvm_sip"]
