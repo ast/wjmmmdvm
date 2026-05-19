@@ -27,11 +27,20 @@
 //! If it doesn't, try running under `setarch armv7l -R`.
 
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use thiserror::Error;
 
+/// Process-wide flag that prevents two concurrent [`Firmware`]
+/// instances. The firmware's RAM region at `0x20000000` holds shared
+/// mutable state — letting a second `Firmware::load()` succeed would
+/// `MAP_FIXED`-clobber the running instance's memory and corrupt
+/// in-flight codec calls. Cleared again when the live `Firmware`
+/// drops, so a subsequent reload works.
+static FIRMWARE_LOADED: AtomicBool = AtomicBool::new(false);
+
 /// Embedded at build time. The bytes are gitignored — see
-/// `firmware/README.md` for where to get them.
+/// `firmware/README.org` for where to get them.
 const FIRMWARE_BYTES: &[u8] = include_bytes!("../firmware/D002.032.img");
 const CORE_BYTES: &[u8] = include_bytes!("../firmware/d02032-core.img");
 
@@ -69,6 +78,11 @@ pub enum FirmwareError {
     // Only constructed on non-ARM builds; harmless on ARM.
     #[allow(dead_code)]
     WrongArch(&'static str),
+    #[error(
+        "another Firmware instance is already live in this process. Only one can exist at a time; \
+         drop the existing Firmware (and its Md380Codec) before loading again."
+    )]
+    AlreadyLoaded,
 }
 
 /// Owned firmware + RAM mappings. While this struct lives, the
@@ -89,9 +103,31 @@ unsafe impl Send for Firmware {}
 impl Firmware {
     /// Map the embedded firmware + RAM core into the process at the
     /// fixed addresses the firmware code expects.
+    ///
+    /// Only one `Firmware` may exist per process. The second call
+    /// returns [`FirmwareError::AlreadyLoaded`]. Drop the existing
+    /// `Firmware` (and any [`crate::codec::Md380Codec`] holding it)
+    /// before calling again.
     pub fn load() -> Result<Self, FirmwareError> {
         check_arch()?;
 
+        // Claim the singleton slot. If another Firmware is already
+        // live, bail before touching mmap so we don't clobber it.
+        if FIRMWARE_LOADED
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(FirmwareError::AlreadyLoaded);
+        }
+
+        // From here on, any error path must release the singleton
+        // slot so a retry is possible.
+        Self::load_inner().inspect_err(|_| {
+            FIRMWARE_LOADED.store(false, Ordering::SeqCst);
+        })
+    }
+
+    fn load_inner() -> Result<Self, FirmwareError> {
         // Firmware: writable+exec while we populate it, then drop
         // write permission so accidental writes trap.
         let firmware = MappedRegion::new_fixed(
@@ -132,6 +168,15 @@ impl Firmware {
             _ram: ram,
             _tcram: tcram,
         })
+    }
+}
+
+impl Drop for Firmware {
+    fn drop(&mut self) {
+        // Release the singleton slot so a future load() can succeed.
+        // The MappedRegion fields are dropped (and munmap'd) right
+        // after this explicit drop returns.
+        FIRMWARE_LOADED.store(false, Ordering::SeqCst);
     }
 }
 

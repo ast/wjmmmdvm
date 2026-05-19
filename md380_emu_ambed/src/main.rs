@@ -7,10 +7,15 @@ mod firmware;
 mod protocol;
 mod server;
 
+/// Crate version with git commit appended, e.g. `0.1.0 (a1b2c3d)`.
+/// `GIT_HASH` is set by `build.rs`; if git is unavailable at build
+/// time it's the literal `unknown`.
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+
 #[derive(Parser, Debug)]
 #[command(
     name = "md380-emu-ambed",
-    version,
+    version = VERSION,
     about = "MD-380 firmware AMBE codec daemon — runs the Tytera MD-380 firmware in-process via mmap'd ARM execution to encode and decode AMBE+2 audio."
 )]
 struct Cli {

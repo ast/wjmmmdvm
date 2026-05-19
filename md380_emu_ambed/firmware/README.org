@@ -1,0 +1,16 @@
+#+TITLE: Required firmware files
+
+This directory needs two files before =md380_emu_ambed= can build:
+
+| File              | Source                                                                                |
+|-------------------+---------------------------------------------------------------------------------------|
+| =D002.032.img=    | =~/src/md380tools/firmware/unwrapped/D002.032.img= (run =make original_D02= upstream) |
+| =d02032-core.img= | =~/src/md380tools/cores/d02032-core.img= (committed in md380tools repo)               |
+
+The contents are =.gitignore='d (patent-encumbered DVSI code; never commit).
+
+From the workspace root, the easiest way is:
+
+#+begin_src bash
+  just sync-firmware
+#+end_src

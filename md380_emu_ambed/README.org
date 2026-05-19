@@ -27,7 +27,7 @@ All the building blocks have been publicly available for years:
 
 The firmware blob is embedded at build time via =include_bytes!=
 from =firmware/D002.032.img= and =firmware/d02032-core.img= (both
-gitignored). See [[file:firmware/README.md][firmware/README.md]] for
+gitignored). See [[file:firmware/README.org][firmware/README.org]] for
 where to source them — typically a one-liner
 =just sync-firmware= from the workspace root pulls them from a
 local md380tools checkout.
