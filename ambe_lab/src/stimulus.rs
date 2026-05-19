@@ -53,6 +53,15 @@ pub enum Stimulus {
         amplitude: f32,
         duration_seconds: f32,
     },
+    /// Band-limited sawtooth — periodic signal with all harmonics up
+    /// to Nyquist at 1/n amplitudes. Mimics the harmonic structure of
+    /// a buzzy vowel and reliably triggers voice-mode encoding in
+    /// md380-emu (unlike pure sines, which fall into tone-mode).
+    Sawtooth {
+        f0_hz: f32,
+        amplitude: f32,
+        duration_seconds: f32,
+    },
 }
 
 impl Stimulus {
@@ -112,6 +121,16 @@ impl Stimulus {
                 *f2_hz as u32,
                 ms(*duration_seconds)
             ),
+            Stimulus::Sawtooth {
+                f0_hz,
+                amplitude,
+                duration_seconds,
+            } => format!(
+                "saw-{}hz-amp{:02}-{}ms",
+                *f0_hz as u32,
+                (*amplitude * 100.0) as u32,
+                ms(*duration_seconds)
+            ),
         }
     }
 
@@ -128,6 +147,9 @@ impl Stimulus {
                 duration_seconds, ..
             }
             | Stimulus::DualTone {
+                duration_seconds, ..
+            }
+            | Stimulus::Sawtooth {
                 duration_seconds, ..
             } => *duration_seconds,
             Stimulus::Impulse { total_seconds, .. } => *total_seconds,
@@ -164,6 +186,11 @@ impl Stimulus {
                 amplitude,
                 duration_seconds,
             } => dual_tone_samples(*f1_hz, *f2_hz, *amplitude, *duration_seconds),
+            Stimulus::Sawtooth {
+                f0_hz,
+                amplitude,
+                duration_seconds,
+            } => sawtooth_samples(*f0_hz, *amplitude, *duration_seconds),
         }
     }
 }
@@ -219,6 +246,25 @@ fn impulse_samples(amplitude: f32, position_seconds: f32, total_seconds: f32) ->
     let mut out = vec![0i16; n];
     let pos = samples(position_seconds).min(n.saturating_sub(1));
     out[pos] = (amplitude.clamp(0.0, 1.0) * i16::MAX as f32) as i16;
+    out
+}
+
+fn sawtooth_samples(f0_hz: f32, amplitude: f32, duration_seconds: f32) -> Vec<i16> {
+    // Band-limited sawtooth: sum of sin(2π·n·f0·t)/n for n up to the
+    // largest n where n·f0 < Nyquist (4 kHz at 8 kHz sample rate).
+    let amp = amplitude.clamp(0.0, 1.0) * i16::MAX as f32 * 0.5;
+    let nyquist = PCM_SAMPLE_RATE_HZ as f32 / 2.0;
+    let n_harmonics = (nyquist / f0_hz).floor() as u32;
+    let n = samples(duration_seconds);
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / PCM_SAMPLE_RATE_HZ as f32;
+        let mut v = 0.0f32;
+        for h in 1..=n_harmonics {
+            v += (TAU * h as f32 * f0_hz * t).sin() / h as f32;
+        }
+        out.push((v * amp) as i16);
+    }
     out
 }
 

@@ -71,12 +71,20 @@ pub struct Spectrum {
     pub gamma: f32,
     /// Number of harmonics L (= bands × harmonics, in [9, 56]).
     pub l: usize,
+    /// Fundamental frequency in Hz (cached so synthesis doesn't need
+    /// to redo the W0 table lookup).
+    pub f0_hz: f32,
     /// `M_l` per harmonic, indexed `[0..L]` (0-indexed for caller
-    /// convenience — `[0]` is the 1st harmonic).
+    /// convenience — `[0]` is the 1st harmonic). Unvoiced harmonics
+    /// already have the `unvc` scale factor applied.
     pub ml: Vec<f32>,
     /// `log2 M_l` per harmonic, same indexing as `ml`. Useful for
     /// inspection / debugging.
     pub log2_ml: Vec<f32>,
+    /// Per-harmonic voicing decision (true = voiced, false = unvoiced).
+    /// Length = L. Comes from the V/UV pattern at band index
+    /// `jl = floor(l · 16 · f0)`.
+    pub voiced: Vec<bool>,
 }
 
 /// Reconstruct the spectral magnitudes for one voice frame. Updates
@@ -215,6 +223,7 @@ pub fn reconstruct(fields: &AmbeFields, state: &mut SpectralState) -> Option<Spe
     let voicing = fields.voicing_pattern().unwrap_or([false; 8]);
     let mut log2_ml_new = vec![0.0f32; l];
     let mut ml = vec![0.0f32; l];
+    let mut voiced_per_harmonic = vec![false; l];
 
     for ll in 1..=l {
         let idx_a = intkl[ll];
@@ -228,6 +237,7 @@ pub fn reconstruct(fields: &AmbeFields, state: &mut SpectralState) -> Option<Spe
 
         let jl = (ll as f32 * 16.0 * f0_cyc) as usize;
         let voiced = voicing.get(jl).copied().unwrap_or(false);
+        voiced_per_harmonic[ll - 1] = voiced;
 
         // mbelib uses exp(0.693 * log2). 0.693 ≈ ln(2), so this is
         // equivalent to 2^log2. Keeping mbelib's exact constant.
@@ -245,8 +255,10 @@ pub fn reconstruct(fields: &AmbeFields, state: &mut SpectralState) -> Option<Spe
     Some(Spectrum {
         gamma,
         l,
+        f0_hz: f0_cyc * 8000.0,
         ml,
         log2_ml: log2_ml_new,
+        voiced: voiced_per_harmonic,
     })
 }
 

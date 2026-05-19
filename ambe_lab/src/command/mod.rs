@@ -2,6 +2,7 @@ use clap::Subcommand;
 
 pub mod capture_corpus;
 pub mod decode;
+pub mod decode_rust;
 pub mod diff_ambe;
 pub mod dump_ambe;
 pub mod dump_fields;
@@ -16,6 +17,8 @@ pub enum Command {
     Encode(encode::EncodeCmd),
     /// Decode AMBE+2 frames back to raw PCM via md380-emu.
     Decode(decode::DecodeCmd),
+    /// Decode AMBE+2 frames using the pure-Rust codec (voice frames only).
+    DecodeRust(decode_rust::DecodeRustCmd),
     /// Generate a directory of golden (pcm, ambe) pairs + manifest.json.
     CaptureCorpus(capture_corpus::CaptureCorpusCmd),
     /// Print each frame in an .ambe file with raw bytes + 49 voice bits.
@@ -32,6 +35,7 @@ impl Command {
             Command::Tone(cmd) => cmd.run().await,
             Command::Encode(cmd) => cmd.run().await,
             Command::Decode(cmd) => cmd.run().await,
+            Command::DecodeRust(cmd) => cmd.run().await,
             Command::CaptureCorpus(cmd) => cmd.run().await,
             Command::DumpAmbe(cmd) => cmd.run().await,
             Command::DiffAmbe(cmd) => cmd.run().await,

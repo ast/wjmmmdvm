@@ -12,7 +12,9 @@
 
 pub mod ambe_fields;
 pub mod spectral;
+pub mod synth;
 pub mod tables;
 
 pub use ambe_fields::{AmbeFields, FrameKind};
 pub use spectral::{reconstruct, Spectrum, SpectralState};
+pub use synth::{frame_to_i16_le, VoicedSynth};

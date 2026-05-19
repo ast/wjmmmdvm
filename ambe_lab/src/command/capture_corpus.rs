@@ -141,5 +141,17 @@ fn default_stimuli() -> Vec<Stimulus> {
             amplitude: 0.5,
             duration_seconds: 2.0,
         },
+        // Harmonic-rich periodic signals — should reliably produce
+        // voice-mode frames (unlike pure sines).
+        Stimulus::Sawtooth {
+            f0_hz: 150.0,
+            amplitude: 0.5,
+            duration_seconds: 2.0,
+        },
+        Stimulus::Sawtooth {
+            f0_hz: 250.0,
+            amplitude: 0.5,
+            duration_seconds: 2.0,
+        },
     ]
 }
