@@ -1,5 +1,6 @@
 use clap::Subcommand;
 
+pub mod echo_dmr;
 pub mod listen_dmr;
 pub mod register;
 
@@ -9,6 +10,9 @@ pub enum Command {
     Register(register::RegisterCmd),
     /// Listen for HBP DMR Network packets from MMDVMHost and log them.
     ListenDmr(listen_dmr::ListenDmrCmd),
+    /// Record one DMR call and replay it back to MMDVMHost — a
+    /// "parrot" without transcoding.
+    EchoDmr(echo_dmr::EchoDmrCmd),
 }
 
 impl Command {
@@ -16,6 +20,7 @@ impl Command {
         match self {
             Command::Register(cmd) => cmd.run().await,
             Command::ListenDmr(cmd) => cmd.run().await,
+            Command::EchoDmr(cmd) => cmd.run().await,
         }
     }
 }

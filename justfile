@@ -13,6 +13,14 @@ BIND       := "0.0.0.0:62031"
 CODEC_TCP  := HOST + ":2460"
 OUTPUT_DIR := "./dmr-rec"
 
+# echo-dmr must send to mmdvm's *LAN* IP (not Tailscale), because
+# MMDVMHost validates the source IP of incoming DMRD packets against
+# its configured GatewayAddress. The hostname `mmdvm` resolves via
+# Tailscale on this workstation, which would put the wrong source IP
+# on outbound packets and MMDVMHost would silently drop them as
+# "packet received from an invalid source".
+ECHO_PEER  := "192.168.1.137:62032"
+
 default:
     @just --list
 
@@ -45,14 +53,27 @@ serve-ambed: deploy-ambed
 # Run mmdvm_sip listen-dmr locally; voice bursts get decoded via the
 # codec at {{CODEC_TCP}}. MMDVMHost on the Pi must have
 # GatewayAddress=<this-workstation-IP>:62031 (see MMDVM-testing.ini).
-listen-dmr:
+# Extra args go straight to the binary: `just listen-dmr --no-decode`.
+listen-dmr *ARGS:
     cargo build --release -p mmdvm_sip
     @mkdir -p {{OUTPUT_DIR}}
     RUST_LOG=mmdvm_sip=info \
       target/release/mmdvm_sip listen-dmr \
         --bind {{BIND}} \
         --codec-tcp {{CODEC_TCP}} \
-        --output-dir {{OUTPUT_DIR}}
+        --output-dir {{OUTPUT_DIR}} \
+        {{ARGS}}
+
+# Parrot mode — record one DMR call and replay it back to MMDVMHost
+# (no transcoding). Defaults to keeping src/dst as recorded.
+# Extra args pass through: `just echo-dmr --swap --repeater-id 0`.
+echo-dmr *ARGS:
+    cargo build --release -p mmdvm_sip
+    RUST_LOG=mmdvm_sip=info \
+      target/release/mmdvm_sip echo-dmr \
+        --bind {{BIND}} \
+        --peer {{ECHO_PEER}} \
+        {{ARGS}}
 
 # ─── file-based smoke tests (encode/decode via ssh) ───────────────────
 
