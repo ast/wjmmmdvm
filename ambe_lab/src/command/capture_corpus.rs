@@ -50,6 +50,11 @@ fn default_stimuli() -> Vec<Stimulus> {
             duration_seconds: 2.0,
         },
         Stimulus::SineTone {
+            frequency_hz: 250.0,
+            amplitude: 0.5,
+            duration_seconds: 2.0,
+        },
+        Stimulus::SineTone {
             frequency_hz: 300.0,
             amplitude: 0.5,
             duration_seconds: 2.0,
@@ -60,12 +65,27 @@ fn default_stimuli() -> Vec<Stimulus> {
             duration_seconds: 2.0,
         },
         Stimulus::SineTone {
+            frequency_hz: 750.0,
+            amplitude: 0.5,
+            duration_seconds: 2.0,
+        },
+        Stimulus::SineTone {
             frequency_hz: 1000.0,
             amplitude: 0.5,
             duration_seconds: 2.0,
         },
         Stimulus::SineTone {
+            frequency_hz: 1500.0,
+            amplitude: 0.5,
+            duration_seconds: 2.0,
+        },
+        Stimulus::SineTone {
             frequency_hz: 2000.0,
+            amplitude: 0.5,
+            duration_seconds: 2.0,
+        },
+        Stimulus::SineTone {
+            frequency_hz: 2500.0,
             amplitude: 0.5,
             duration_seconds: 2.0,
         },
@@ -77,6 +97,16 @@ fn default_stimuli() -> Vec<Stimulus> {
         Stimulus::SineTone {
             frequency_hz: 1000.0,
             amplitude: 0.1,
+            duration_seconds: 1.0,
+        },
+        Stimulus::SineTone {
+            frequency_hz: 1000.0,
+            amplitude: 0.3,
+            duration_seconds: 1.0,
+        },
+        Stimulus::SineTone {
+            frequency_hz: 1000.0,
+            amplitude: 0.7,
             duration_seconds: 1.0,
         },
         Stimulus::SineTone {

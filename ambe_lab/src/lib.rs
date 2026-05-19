@@ -6,6 +6,8 @@
 //! research-only and intentionally excluded from the workspace's
 //! `default-members`.
 
+pub mod ambe_frame;
+pub mod codec;
 pub mod corpus;
 pub mod error;
 pub mod md380_emu;

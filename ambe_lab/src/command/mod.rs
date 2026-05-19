@@ -2,6 +2,9 @@ use clap::Subcommand;
 
 pub mod capture_corpus;
 pub mod decode;
+pub mod diff_ambe;
+pub mod dump_ambe;
+pub mod dump_fields;
 pub mod encode;
 pub mod tone;
 
@@ -15,6 +18,12 @@ pub enum Command {
     Decode(decode::DecodeCmd),
     /// Generate a directory of golden (pcm, ambe) pairs + manifest.json.
     CaptureCorpus(capture_corpus::CaptureCorpusCmd),
+    /// Print each frame in an .ambe file with raw bytes + 49 voice bits.
+    DumpAmbe(dump_ambe::DumpAmbeCmd),
+    /// Compare two .ambe files frame-by-frame.
+    DiffAmbe(diff_ambe::DiffAmbeCmd),
+    /// Print each frame's b0..b8 parameter indices and frame kind.
+    DumpFields(dump_fields::DumpFieldsCmd),
 }
 
 impl Command {
@@ -24,6 +33,9 @@ impl Command {
             Command::Encode(cmd) => cmd.run().await,
             Command::Decode(cmd) => cmd.run().await,
             Command::CaptureCorpus(cmd) => cmd.run().await,
+            Command::DumpAmbe(cmd) => cmd.run().await,
+            Command::DiffAmbe(cmd) => cmd.run().await,
+            Command::DumpFields(cmd) => cmd.run().await,
         }
     }
 }
