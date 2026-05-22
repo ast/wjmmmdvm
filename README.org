@@ -70,15 +70,15 @@ Requires =stm32flash= and =pinctrl= installed on the Pi.
 
 The active =MMDVMHost= configuration lives in [[file:MMDVM.ini]]. Highlights:
 
-| Setting       | Value                  |
-|---------------+------------------------|
-| Callsign      | SM6WJM                 |
-| DMR ID        | 2406237                |
-| Mode          | Simplex (Duplex=0)     |
-| RX/TX         | 433.6375 MHz           |
-| Modes enabled | DMR                    |
+| Setting       | Value                                   |
+|---------------+-----------------------------------------|
+| Callsign      | SM6WJM                                  |
+| DMR ID        | 2406237                                 |
+| Mode          | Simplex (Duplex=0)                      |
+| RX/TX         | 433.6375 MHz                            |
+| Modes enabled | DMR                                     |
 | DMR network   | Brandmeister BM2402 (44.5.24.178:62031) |
-| Modem port    | =/dev/ttyAMA0= @ 115200 |
+| Modem port    | =/dev/ttyAMA0= @ 115200                   |
 
 The Brandmeister password is no longer in =MMDVM.ini= — newer =MMDVMHost=
 hands off to a separate DMR gateway process (see next section), which holds
@@ -143,12 +143,12 @@ namespace per node.
 
 ** Topics MMDVMHost publishes
 
-| Topic               | Content                                                                 |
-|---------------------+-------------------------------------------------------------------------|
-| =mmdvm/log=         | Plaintext log lines, level-gated by =[Log] MQTTLevel=. Same as stdout.   |
-| =mmdvm/json=        | Structured per-event JSON (see below) — the interesting telemetry feed. |
+| Topic             | Content                                                                              |
+|-------------------+--------------------------------------------------------------------------------------|
+| =mmdvm/log=         | Plaintext log lines, level-gated by =[Log] MQTTLevel=. Same as stdout.                 |
+| =mmdvm/json=        | Structured per-event JSON (see below) — the interesting telemetry feed.              |
 | =mmdvm/display-out= | Raw display-protocol bytes for an external renderer (replaces OLED/Nextion/HD44780). |
-| =mmdvm/response=    | Replies to remote-control commands.                                     |
+| =mmdvm/response=    | Replies to remote-control commands.                                                  |
 
 ** What's in =mmdvm/json=
 
@@ -267,30 +267,30 @@ HomeBrew Repeater Protocol (HBP) over UDP. Same wire format
 BrandMeister masters and =DMRGateway= speak. No authentication on this
 socket. Packet type is identified by a 4-byte ASCII magic at offset 0.
 
-| From → To             | Magic | Purpose                                |
-|-----------------------+-------+----------------------------------------|
-| Pi → 192.168.1.40     | DMRD  | RF voice/data burst (55 B)             |
-| Pi → 192.168.1.40     | DMRG  | GPS embedded in radio's LC             |
-| Pi → 192.168.1.40     | DMRA  | Talker Alias block                     |
-| Pi → 192.168.1.40     | DMRC  | Repeater config heartbeat (~every 10 s) |
-| 192.168.1.40 → Pi     | DMRD  | Network frames to TX on RF             |
-| 192.168.1.40 → Pi     | DMRP  | Ping / keepalive                       |
-| 192.168.1.40 → Pi     | DMRB  | Beacon request                         |
+| From → To         | Magic | Purpose                                 |
+|-------------------+-------+-----------------------------------------|
+| Pi → 192.168.1.40 | DMRD  | RF voice/data burst (55 B)              |
+| Pi → 192.168.1.40 | DMRG  | GPS embedded in radio's LC              |
+| Pi → 192.168.1.40 | DMRA  | Talker Alias block                      |
+| Pi → 192.168.1.40 | DMRC  | Repeater config heartbeat (~every 10 s) |
+| 192.168.1.40 → Pi | DMRD  | Network frames to TX on RF              |
+| 192.168.1.40 → Pi | DMRP  | Ping / keepalive                        |
+| 192.168.1.40 → Pi | DMRB  | Beacon request                          |
 
 =DMRD= packet layout (55 bytes):
 
-| Offset | Field                                                          |
-|--------+----------------------------------------------------------------|
-| 0–3    | Magic =DMRD=                                                   |
-| 4      | Sequence                                                       |
-| 5–7    | Source DMR ID (24-bit)                                         |
-| 8–10   | Destination DMR ID (24-bit)                                    |
-| 11–14  | Repeater ID (=Id= from =[General]=, 32-bit BE)                 |
+| Offset | Field                                                                                      |
+|--------+--------------------------------------------------------------------------------------------|
+| 0–3    | Magic =DMRD=                                                                                 |
+| 4      | Sequence                                                                                   |
+| 5–7    | Source DMR ID (24-bit)                                                                     |
+| 8–10   | Destination DMR ID (24-bit)                                                                |
+| 11–14  | Repeater ID (=Id= from =[General]=, 32-bit BE)                                                 |
 | 15     | Flags: bit7=slot, bit6=group/private, bit5/4=data/voice sync, bits0–3=frame N or data type |
-| 16–19  | Stream ID (random per call/CSBK/data header)                   |
-| 20–52  | 33-byte DMR payload (AMBE voice frames or data)                |
-| 53     | BER                                                            |
-| 54     | RSSI                                                           |
+| 16–19  | Stream ID (random per call/CSBK/data header)                                               |
+| 20–52  | 33-byte DMR payload (AMBE voice frames or data)                                            |
+| 53     | BER                                                                                        |
+| 54     | RSSI                                                                                       |
 
 ** Reference implementations
 
